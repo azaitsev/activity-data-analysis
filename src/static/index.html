@@ -50,7 +50,7 @@
         </div>
       </div>
 
-      <div id="processingStatus" class="processingStatus hidden" aria-live="polite">
+      <div id="processingStatus" class="processingStatus hidden" aria-live="polite" hidden>
         <div class="processingRow">
           <div class="spinner" aria-hidden="true"></div>
           <div id="processingMessage" class="muted"></div>
@@ -138,12 +138,15 @@
       }
 
       function setProcessingState(isProcessingFiles, processingMessageText, processingFilesCount) {
-        if (isProcessingFiles && processingFilesCount > 0) {
+        const processingIndicatorShouldBeVisible = isProcessingFiles && processingFilesCount > 0;
+        if (processingIndicatorShouldBeVisible) {
+          ui.processingStatus.removeAttribute("hidden");
           ui.processingStatus.classList.remove("hidden");
           ui.processingMessage.textContent = processingMessageText || "Processing files";
           ui.processingProgressBar.setAttribute("aria-valuetext", ui.processingMessage.textContent);
         } else {
           ui.processingStatus.classList.add("hidden");
+          ui.processingStatus.setAttribute("hidden", "");
           ui.processingMessage.textContent = "";
           ui.processingProgressBar.setAttribute("aria-valuetext", "");
         }
