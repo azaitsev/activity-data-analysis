@@ -1,0 +1,6 @@
+fastapi==0.109.2
+uvicorn==0.27.1
+python-multipart==0.0.9
+pandas==2.2.0
+fitparse==1.2.0
+lxml==5.1.0

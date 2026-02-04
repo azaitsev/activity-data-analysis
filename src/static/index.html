@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Activity data analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; }
+      #filesPanel { border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; margin-bottom: 16px; }
+      #filesHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+      #filesList { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .fileRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; border: 1px solid #f0f0f0; border-radius: 8px; }
+      .fileLeft { display: flex; align-items: center; gap: 10px; min-width: 0; }
+      .fileName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
+      .badge { font-size: 12px; padding: 2px 8px; border: 1px solid #e5e5e5; border-radius: 999px; color: #444; }
+      .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      button { padding: 8px 12px; cursor: pointer; }
+      .btnSmall { padding: 6px 10px; }
+      .muted { color: #666; font-size: 13px; }
+      .error { color: #b00020; font-size: 13px; }
+      input[type="checkbox"] { transform: scale(1.1); }
+      .row { display: grid; grid-template-columns: 1fr; gap: 16px; }
+      .card { border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="filesPanel">
+      <div id="filesHeader">
+        <div>
+          <strong>Files</strong>
+          <span id="filesCount" class="muted"></span>
+          <span id="status" class="muted"></span>
+        </div>
+
+        <div class="actions">
+          <input id="fileInput" type="file" multiple accept=".fit,.tcx" style="display:none" />
+          <button id="addFilesBtn">Add files</button>
+          <button id="enableAllBtn" class="btnSmall">Enable all</button>
+          <button id="disableAllBtn" class="btnSmall">Disable all</button>
+          <button id="clearBtn" class="btnSmall">Clear</button>
+        </div>
+      </div>
+
+      <div id="filesList"></div>
+      <div id="filesError" class="error"></div>
+    </div>
+
+    <div class="row">
+      <div class="card"><div id="chartHr"></div></div>
+      <div class="card"><div id="chartSpeed"></div></div>
+      <div class="card"><div id="chartPower"></div></div>
+    </div>
+
+    <script>
+      function makeChartOptions(title) {
+        return {
+          chart: {
+            type: "line",
+            height: 320,
+            animations: { enabled: false },
+            zoom: { enabled: true },
+            toolbar: { show: true }
+          },
+          stroke: { width: 2 },
+          title: { text: title },
+          xaxis: { type: "datetime", tooltip: { enabled: true } },
+          series: [],
+          tooltip: { shared: true, intersect: false },
+          legend: { position: "top" },
+          noData: { text: "No data" }
+        };
+      }
+
+      const chartHr = new ApexCharts(document.querySelector("#chartHr"), makeChartOptions("Heart rate (bpm)"));
+      const chartSpeed = new ApexCharts(document.querySelector("#chartSpeed"), makeChartOptions("Speed (km/h)"));
+      const chartPower = new ApexCharts(document.querySelector("#chartPower"), makeChartOptions("Power (W)"));
+      chartHr.render();
+      chartSpeed.render();
+      chartPower.render();
+
+      const ui = {
+        fileInput: document.querySelector("#fileInput"),
+        addFilesBtn: document.querySelector("#addFilesBtn"),
+        status: document.querySelector("#status"),
+        filesList: document.querySelector("#filesList"),
+        filesCount: document.querySelector("#filesCount"),
+        filesError: document.querySelector("#filesError"),
+        enableAllBtn: document.querySelector("#enableAllBtn"),
+        disableAllBtn: document.querySelector("#disableAllBtn"),
+        clearBtn: document.querySelector("#clearBtn"),
+      };
+
+      const SUPPORTED_METRICS = ["hr_bpm", "speed_kmh", "power_w"];
+
+      // key -> { key, name, size, lastModified, enabled, parsedSeries: { hr_bpm, speed_kmh, power_w } }
+      const state = {
+        files: new Map()
+      };
+
+      function formatBytes(bytes) {
+        const units = ["B","KB","MB","GB"];
+        let value = bytes;
+        let idx = 0;
+        while (value >= 1024 && idx < units.length - 1) { value /= 1024; idx++; }
+        return `${value.toFixed(idx === 0 ? 0 : 1)} ${units[idx]}`;
+      }
+
+      function makeFileKey(file) {
+        return `${file.name}::${file.size}::${file.lastModified}`;
+      }
+
+      function setStatus(text) {
+        ui.status.textContent = text ? ` · ${text}` : "";
+      }
+
+      function setError(text) {
+        ui.filesError.textContent = text || "";
+      }
+
+      function escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+      }
+
+      function enabledFiles() {
+        return Array.from(state.files.values()).filter(f => f.enabled);
+      }
+
+      function updateFilesHeader() {
+        const total = state.files.size;
+        const enabled = enabledFiles().length;
+        ui.filesCount.textContent = total ? `(${enabled}/${total} enabled)` : "(0)";
+        ui.addFilesBtn.textContent = total ? "Add more files" : "Add files";
+      }
+
+      function renderFilesList() {
+        updateFilesHeader();
+
+        if (state.files.size === 0) {
+          ui.filesList.innerHTML = `<div class="muted">No files added</div>`;
+          return;
+        }
+
+        const items = Array.from(state.files.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+        ui.filesList.innerHTML = items.map(item => {
+          const ext = item.name.toLowerCase().endsWith(".fit") ? "FIT" : (item.name.toLowerCase().endsWith(".tcx") ? "TCX" : "FILE");
+          return `
+            <div class="fileRow" data-key="${escapeHtml(item.key)}">
+              <div class="fileLeft">
+                <input type="checkbox" data-action="toggle" ${item.enabled ? "checked" : ""} />
+                <span class="fileName" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                <span class="badge">${ext}</span>
+                <span class="muted">${formatBytes(item.size)}</span>
+              </div>
+              <div class="actions">
+                <button class="btnSmall" data-action="remove">Remove</button>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        ui.filesList.querySelectorAll(".fileRow").forEach(row => {
+          row.addEventListener("click", async (ev) => {
+            const target = ev.target;
+            if (!(target instanceof HTMLElement)) return;
+
+            const key = row.getAttribute("data-key");
+            if (!key) return;
+
+            const action = target.getAttribute("data-action");
+            if (!action) return;
+
+            if (action === "toggle") {
+              ev.stopPropagation();
+              const fileItem = state.files.get(key);
+              if (!fileItem) return;
+              fileItem.enabled = row.querySelector('input[type="checkbox"]').checked;
+              updateFilesHeader();
+              await updateChartsFromState();
+              return;
+            }
+
+            if (action === "remove") {
+              ev.stopPropagation();
+              state.files.delete(key);
+              renderFilesList();
+              await updateChartsFromState();
+              return;
+            }
+          });
+        });
+      }
+
+      async function fetchParsedSeries(files) {
+        const formData = new FormData();
+        for (const file of files) formData.append("files", file);
+
+        const response = await fetch("/api/parse", { method: "POST", body: formData });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || "Parse failed");
+        }
+        return response.json();
+      }
+
+      function buildSeriesLookup(resultJson) {
+        const series = (resultJson && resultJson.series) || {};
+        const lookup = {};
+        for (const metric of SUPPORTED_METRICS) {
+          lookup[metric] = new Map();
+          const arr = Array.isArray(series[metric]) ? series[metric] : [];
+          for (const s of arr) {
+            if (s && typeof s.name === "string") lookup[metric].set(s.name, s);
+          }
+        }
+        return lookup;
+      }
+
+      async function addSelectedFiles(fileList) {
+        setError("");
+
+        const filesToParse = [];
+        for (const file of fileList) {
+          const lower = file.name.toLowerCase();
+          if (!lower.endsWith(".fit") && !lower.endsWith(".tcx")) continue;
+          const key = makeFileKey(file);
+          if (state.files.has(key)) continue;
+          filesToParse.push(file);
+        }
+
+        if (!filesToParse.length) {
+          return;
+        }
+
+        ui.addFilesBtn.disabled = true;
+        ui.enableAllBtn.disabled = true;
+        ui.disableAllBtn.disabled = true;
+        ui.clearBtn.disabled = true;
+
+        try {
+          setStatus(`Parsing ${filesToParse.length} file(s)`);
+          const result = await fetchParsedSeries(filesToParse);
+          const lookup = buildSeriesLookup(result);
+
+          for (const file of filesToParse) {
+            const key = makeFileKey(file);
+            state.files.set(key, {
+              key,
+              name: file.name,
+              size: file.size,
+              lastModified: file.lastModified,
+              enabled: true,
+              parsedSeries: {
+                hr_bpm: lookup.hr_bpm.get(file.name) || { name: file.name, data: [] },
+                speed_kmh: lookup.speed_kmh.get(file.name) || { name: file.name, data: [] },
+                power_w: lookup.power_w.get(file.name) || { name: file.name, data: [] },
+              }
+            });
+          }
+
+          renderFilesList();
+          await updateChartsFromState();
+          setStatus("");
+        } catch (err) {
+          setStatus("");
+          setError(err instanceof Error ? err.message : "Parse error");
+        } finally {
+          ui.addFilesBtn.disabled = false;
+          ui.enableAllBtn.disabled = false;
+          ui.disableAllBtn.disabled = false;
+          ui.clearBtn.disabled = false;
+        }
+      }
+
+      function seriesForMetric(metric) {
+        const result = [];
+        for (const item of enabledFiles()) {
+          const s = item.parsedSeries[metric];
+          if (s && Array.isArray(s.data) && s.data.length) result.push(s);
+        }
+        return result;
+      }
+
+      async function updateChartsFromState() {
+        await chartHr.updateSeries(seriesForMetric("hr_bpm"));
+        await chartSpeed.updateSeries(seriesForMetric("speed_kmh"));
+        await chartPower.updateSeries(seriesForMetric("power_w"));
+      }
+
+      ui.addFilesBtn.addEventListener("click", () => {
+        ui.fileInput.click();
+      });
+
+      ui.fileInput.addEventListener("change", async () => {
+        const files = ui.fileInput.files;
+        if (files && files.length) {
+          await addSelectedFiles(files);
+        }
+        ui.fileInput.value = "";
+      });
+
+      ui.enableAllBtn.addEventListener("click", async () => {
+        for (const item of state.files.values()) item.enabled = true;
+        renderFilesList();
+        await updateChartsFromState();
+      });
+
+      ui.disableAllBtn.addEventListener("click", async () => {
+        for (const item of state.files.values()) item.enabled = false;
+        renderFilesList();
+        await updateChartsFromState();
+      });
+
+      ui.clearBtn.addEventListener("click", async () => {
+        state.files.clear();
+        renderFilesList();
+        await updateChartsFromState();
+      });
+
+      renderFilesList();
+    </script>
+  </body>
+</html>
