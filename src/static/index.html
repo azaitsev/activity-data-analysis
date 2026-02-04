@@ -22,6 +22,14 @@
       input[type="checkbox"] { transform: scale(1.1); }
       .row { display: grid; grid-template-columns: 1fr; gap: 16px; }
       .card { border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; }
+      .hidden { display: none; }
+      .processingStatus { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+      .processingRow { display: flex; align-items: center; gap: 8px; }
+      .spinner { width: 14px; height: 14px; border: 2px solid #cfcfcf; border-top-color: #444; border-radius: 50%; animation: spin 0.9s linear infinite; }
+      .progressBar { position: relative; height: 6px; background: #f0f0f0; border-radius: 999px; overflow: hidden; }
+      .progressBar::after { content: ""; position: absolute; left: -40%; width: 40%; height: 100%; background: #4c7ed9; animation: progress 1.2s ease-in-out infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @keyframes progress { 50% { left: 60%; } 100% { left: 120%; } }
     </style>
   </head>
   <body>
@@ -40,6 +48,14 @@
           <button id="disableAllBtn" class="btnSmall">Disable all</button>
           <button id="clearBtn" class="btnSmall">Clear</button>
         </div>
+      </div>
+
+      <div id="processingStatus" class="processingStatus hidden" aria-live="polite">
+        <div class="processingRow">
+          <div class="spinner" aria-hidden="true"></div>
+          <div id="processingMessage" class="muted"></div>
+        </div>
+        <div id="processingProgressBar" class="progressBar" role="progressbar" aria-valuetext="Processing"></div>
       </div>
 
       <div id="filesList"></div>
@@ -89,6 +105,9 @@
         enableAllBtn: document.querySelector("#enableAllBtn"),
         disableAllBtn: document.querySelector("#disableAllBtn"),
         clearBtn: document.querySelector("#clearBtn"),
+        processingStatus: document.querySelector("#processingStatus"),
+        processingMessage: document.querySelector("#processingMessage"),
+        processingProgressBar: document.querySelector("#processingProgressBar"),
       };
 
       const SUPPORTED_METRICS = ["hr_bpm", "speed_kmh", "power_w"];
@@ -116,6 +135,18 @@
 
       function setError(text) {
         ui.filesError.textContent = text || "";
+      }
+
+      function setProcessingState(isProcessingFiles, processingMessageText) {
+        if (isProcessingFiles) {
+          ui.processingStatus.classList.remove("hidden");
+          ui.processingMessage.textContent = processingMessageText || "Processing files";
+          ui.processingProgressBar.setAttribute("aria-valuetext", ui.processingMessage.textContent);
+        } else {
+          ui.processingStatus.classList.add("hidden");
+          ui.processingMessage.textContent = "";
+          ui.processingProgressBar.setAttribute("aria-valuetext", "");
+        }
       }
 
       function escapeHtml(text) {
@@ -241,7 +272,7 @@
         ui.clearBtn.disabled = true;
 
         try {
-          setStatus(`Parsing ${filesToParse.length} file(s)`);
+          setProcessingState(true, `Processing ${filesToParse.length} file(s)`);
           const result = await fetchParsedSeries(filesToParse);
           const lookup = buildSeriesLookup(result);
 
@@ -263,11 +294,10 @@
 
           renderFilesList();
           await updateChartsFromState();
-          setStatus("");
         } catch (err) {
-          setStatus("");
           setError(err instanceof Error ? err.message : "Parse error");
         } finally {
+          setProcessingState(false, "");
           ui.addFilesBtn.disabled = false;
           ui.enableAllBtn.disabled = false;
           ui.disableAllBtn.disabled = false;
