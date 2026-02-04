@@ -137,8 +137,8 @@
         ui.filesError.textContent = text || "";
       }
 
-      function setProcessingState(isProcessingFiles, processingMessageText) {
-        if (isProcessingFiles) {
+      function setProcessingState(isProcessingFiles, processingMessageText, processingFilesCount) {
+        if (isProcessingFiles && processingFilesCount > 0) {
           ui.processingStatus.classList.remove("hidden");
           ui.processingMessage.textContent = processingMessageText || "Processing files";
           ui.processingProgressBar.setAttribute("aria-valuetext", ui.processingMessage.textContent);
@@ -272,7 +272,7 @@
         ui.clearBtn.disabled = true;
 
         try {
-          setProcessingState(true, `Processing ${filesToParse.length} file(s)`);
+          setProcessingState(true, `Processing ${filesToParse.length} file(s)`, filesToParse.length);
           const result = await fetchParsedSeries(filesToParse);
           const lookup = buildSeriesLookup(result);
 
@@ -297,7 +297,7 @@
         } catch (err) {
           setError(err instanceof Error ? err.message : "Parse error");
         } finally {
-          setProcessingState(false, "");
+          setProcessingState(false, "", 0);
           ui.addFilesBtn.disabled = false;
           ui.enableAllBtn.disabled = false;
           ui.disableAllBtn.disabled = false;
