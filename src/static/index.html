@@ -66,7 +66,43 @@
           title: { text: title },
           xaxis: { type: "datetime", tooltip: { enabled: true } },
           series: [],
-          tooltip: { shared: true, intersect: false },
+          tooltip: {
+            shared: true,
+            intersect: false,
+            custom: function(customTooltipContext) {
+              const seriesIndexForHoveredPoint = customTooltipContext.seriesIndex;
+              const dataPointIndexForSharedTooltip = customTooltipContext.dataPointIndex;
+              const chartContext = customTooltipContext.w;
+              if (seriesIndexForHoveredPoint < 0 || dataPointIndexForSharedTooltip < 0) return "";
+
+              const xValueForHoveredPoint = chartContext.globals.seriesX[seriesIndexForHoveredPoint][dataPointIndexForSharedTooltip];
+              const roundedHoveredTimeInMilliseconds = Math.floor(xValueForHoveredPoint / 1000) * 1000;
+              const tooltipLines = [];
+
+              for (let currentSeriesIndex = 0; currentSeriesIndex < chartContext.globals.series.length; currentSeriesIndex++) {
+                const seriesNameForTooltip = chartContext.globals.seriesNames[currentSeriesIndex];
+                const xValuesForCurrentSeries = chartContext.globals.seriesX[currentSeriesIndex] || [];
+                const seriesValuesForCurrentSeries = chartContext.globals.series[currentSeriesIndex] || [];
+                let seriesValueForTooltip = "-";
+
+                for (let currentSeriesDataPointIndex = 0; currentSeriesDataPointIndex < xValuesForCurrentSeries.length; currentSeriesDataPointIndex++) {
+                  const roundedSeriesPointTimeInMilliseconds = Math.floor(xValuesForCurrentSeries[currentSeriesDataPointIndex] / 1000) * 1000;
+                  if (roundedSeriesPointTimeInMilliseconds === roundedHoveredTimeInMilliseconds) {
+                    const valueAtMatchedTime = seriesValuesForCurrentSeries[currentSeriesDataPointIndex];
+                    seriesValueForTooltip = valueAtMatchedTime === undefined ? "-" : valueAtMatchedTime;
+                    break;
+                  }
+                }
+
+                tooltipLines.push(`<div><span>${seriesNameForTooltip}:</span> <strong>${seriesValueForTooltip}</strong></div>`);
+              }
+
+              if (!tooltipLines.length) return "";
+
+              const timeLabelForTooltip = new Date(roundedHoveredTimeInMilliseconds).toLocaleString();
+              return `<div class="apexcharts-tooltip-title">${timeLabelForTooltip}</div>${tooltipLines.join("")}`;
+            }
+          },
           legend: { position: "top" },
           noData: { text: "No data" }
         };
