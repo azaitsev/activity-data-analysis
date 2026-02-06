@@ -71,30 +71,27 @@
             intersect: false,
             custom: function(customTooltipContext) {
               const seriesIndexForHoveredPoint = customTooltipContext.seriesIndex;
-              const dataPointIndexForHoveredPoint = customTooltipContext.dataPointIndex;
+              const dataPointIndexForSharedTooltip = customTooltipContext.dataPointIndex;
               const chartContext = customTooltipContext.w;
-              if (seriesIndexForHoveredPoint < 0 || dataPointIndexForHoveredPoint < 0) return "";
+              if (seriesIndexForHoveredPoint < 0 || dataPointIndexForSharedTooltip < 0) return "";
 
-              const xValueForHoveredPoint = chartContext.globals.seriesX[seriesIndexForHoveredPoint][dataPointIndexForHoveredPoint];
+              const xValueForHoveredPoint = chartContext.globals.seriesX[seriesIndexForHoveredPoint][dataPointIndexForSharedTooltip];
               const tooltipLines = [];
 
               for (let currentSeriesIndex = 0; currentSeriesIndex < chartContext.globals.series.length; currentSeriesIndex++) {
-                const xValuesForCurrentSeries = chartContext.globals.seriesX[currentSeriesIndex];
-                const dataPointIndexForCurrentSeries = xValuesForCurrentSeries.indexOf(xValueForHoveredPoint);
-                if (dataPointIndexForCurrentSeries === -1) continue;
+                const xValueForCurrentSeriesPoint = chartContext.globals.seriesX[currentSeriesIndex][dataPointIndexForSharedTooltip];
+                if (xValueForCurrentSeriesPoint !== xValueForHoveredPoint) continue;
 
                 const seriesNameForTooltip = chartContext.globals.seriesNames[currentSeriesIndex];
-                const seriesValueForTooltip = chartContext.globals.series[currentSeriesIndex][dataPointIndexForCurrentSeries];
+                const seriesValueForTooltip = chartContext.globals.series[currentSeriesIndex][dataPointIndexForSharedTooltip];
+                if (seriesValueForTooltip === undefined) continue;
                 tooltipLines.push(`<div><span>${seriesNameForTooltip}:</span> <strong>${seriesValueForTooltip}</strong></div>`);
               }
 
               if (!tooltipLines.length) return "";
 
-              const xLabelForTooltip = chartContext.globals.labels.length
-                ? chartContext.globals.labels[chartContext.globals.seriesX[seriesIndexForHoveredPoint].indexOf(xValueForHoveredPoint)]
-                : new Date(xValueForHoveredPoint).toLocaleString();
-
-              return `<div class="apexcharts-tooltip-title">${xLabelForTooltip}</div>${tooltipLines.join("")}`;
+              const timeLabelForTooltip = new Date(xValueForHoveredPoint).toLocaleString();
+              return `<div class="apexcharts-tooltip-title">${timeLabelForTooltip}</div>${tooltipLines.join("")}`;
             }
           },
           legend: { position: "top" },
