@@ -22,6 +22,21 @@
       input[type="checkbox"] { transform: scale(1.1); }
       .row { display: grid; grid-template-columns: 1fr; gap: 16px; }
       .card { border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; }
+      .analyticsHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+      .analyticsControls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+      .analyticsToggle { display: inline-flex; align-items: center; gap: 6px; color: #444; font-size: 13px; white-space: nowrap; }
+      .analyticsTableWrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { padding: 8px 10px; border-bottom: 1px solid #eeeeee; text-align: right; white-space: nowrap; }
+      th:first-child, td:first-child, th:nth-child(2), td:nth-child(2), th:nth-child(3), td:nth-child(3) { text-align: left; }
+      th { color: #444; font-weight: 650; background: #fafafa; }
+      .bestCell { background: #eaf7ed; color: #146c2e; font-weight: 700; }
+      .analyticsEmpty { padding: 8px 0; }
+      .metricHeader { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; }
+      .metricHelp { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border: 1px solid #cfcfcf; border-radius: 50%; color: #555; background: #fff; font-size: 11px; line-height: 1; cursor: help; }
+      .metricHelp:focus { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+      #metricTooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 8px; background: #222; color: #fff; font-size: 12px; font-weight: 400; line-height: 1.35; text-align: left; white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.18); opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity 120ms ease, transform 120ms ease; }
+      #metricTooltip.visible { opacity: 1; transform: translateY(0); }
     </style>
   </head>
   <body>
@@ -36,8 +51,8 @@
         <div class="actions">
           <input id="fileInput" type="file" multiple accept=".fit,.tcx" style="display:none" />
           <button id="addFilesBtn">Add files</button>
-          <button id="enableAllBtn" class="btnSmall">Enable all</button>
-          <button id="disableAllBtn" class="btnSmall">Disable all</button>
+          <button id="enableAllBtn" class="btnSmall">Show all</button>
+          <button id="disableAllBtn" class="btnSmall">Hide all</button>
           <button id="clearBtn" class="btnSmall">Clear</button>
         </div>
       </div>
@@ -47,12 +62,104 @@
     </div>
 
     <div class="row">
-      <div class="card"><div id="chartHr"></div></div>
-      <div class="card"><div id="chartSpeed"></div></div>
-      <div class="card"><div id="chartPower"></div></div>
+      <div class="card">
+        <div class="analyticsHeader">
+          <div>
+            <strong>Comparison analytics</strong>
+            <span class="muted">choose the file used as the comparison baseline</span>
+          </div>
+          <div class="analyticsControls">
+            <label class="analyticsToggle" title="Show and compare only the common time window available in all enabled files.">
+              <input id="trimToShortestInput" type="checkbox" />
+              <span>Analyze common period</span>
+            </label>
+            <label class="analyticsToggle" title="Switch chart X-axis between wall-clock time and elapsed time from the activity/common-period start.">
+              <span>Chart time</span>
+              <select id="chartTimeModeSelect">
+                <option value="absolute">Absolute</option>
+                <option value="elapsed">From start</option>
+              </select>
+            </label>
+            <span id="analyticsStatus" class="muted"></span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div id="chartHr"></div>
+        <div id="analyticsTableHr"></div>
+      </div>
+      <div class="card">
+        <div id="chartSpeed"></div>
+        <div id="analyticsTableSpeed"></div>
+      </div>
+      <div class="card">
+        <div id="chartPower"></div>
+        <div id="analyticsTablePower"></div>
+      </div>
     </div>
+    <div id="metricTooltip" role="tooltip"></div>
 
     <script>
+      let currentChartTimeMode = "absolute";
+
+      function chartTimestampFromFormatterValue(value, timestamp) {
+        if (Number.isFinite(Number(timestamp))) return Number(timestamp);
+
+        const numericValue = Number(value);
+        if (Number.isFinite(numericValue)) return numericValue;
+
+        const parsedValue = Date.parse(value);
+        return Number.isFinite(parsedValue) ? parsedValue : null;
+      }
+
+      // ApexCharts can fall back to dense or UTC-looking datetime labels; formatting timestamps
+      // ourselves keeps the chart axis and tooltip readable and tied to the user's local timezone.
+      function formatChartTimestamp(value, timestamp, includeDate = false) {
+        const timestampMs = chartTimestampFromFormatterValue(value, timestamp);
+        if (timestampMs === null) return "";
+
+        const date = new Date(timestampMs);
+        const dateOptions = includeDate
+          ? { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }
+          : { hour: "2-digit", minute: "2-digit", second: "2-digit" };
+        return new Intl.DateTimeFormat(undefined, {
+          ...dateOptions,
+          hour12: false,
+          hourCycle: "h23"
+        }).format(date);
+      }
+
+      function formatElapsedAxisMilliseconds(milliseconds) {
+        if (!Number.isFinite(Number(milliseconds))) return "";
+        const totalSeconds = Math.max(0, Math.floor(Number(milliseconds) / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const paddedMinutes = String(minutes).padStart(2, "0");
+        const paddedSeconds = String(seconds).padStart(2, "0");
+        return hours > 0 ? `${hours}:${paddedMinutes}:${paddedSeconds}` : `${minutes}:${paddedSeconds}`;
+      }
+
+      function formatChartXValue(value, timestamp, includeDate = false) {
+        if (currentChartTimeMode === "elapsed") {
+          return formatElapsedAxisMilliseconds(chartTimestampFromFormatterValue(value, timestamp));
+        }
+        return formatChartTimestamp(value, timestamp, includeDate);
+      }
+
+      function chartXAxisBaseOptions(type) {
+        return {
+          type,
+          tooltip: { enabled: true },
+          labels: {
+            datetimeUTC: false,
+            formatter: function(value, timestamp) {
+              return formatChartXValue(value, timestamp);
+            }
+          }
+        };
+      }
+
       function makeChartOptions(title) {
         return {
           chart: {
@@ -64,7 +171,7 @@
           },
           stroke: { width: 2 },
           title: { text: title },
-          xaxis: { type: "datetime", tooltip: { enabled: true } },
+          xaxis: chartXAxisBaseOptions("datetime"),
           series: [],
           tooltip: {
             shared: true,
@@ -99,7 +206,7 @@
 
               if (!tooltipLines.length) return "";
 
-              const timeLabelForTooltip = new Date(roundedHoveredTimeInMilliseconds).toLocaleString();
+              const timeLabelForTooltip = formatChartXValue(roundedHoveredTimeInMilliseconds, roundedHoveredTimeInMilliseconds, true);
               return `<div class="apexcharts-tooltip-title">${timeLabelForTooltip}</div>${tooltipLines.join("")}`;
             }
           },
@@ -125,13 +232,51 @@
         enableAllBtn: document.querySelector("#enableAllBtn"),
         disableAllBtn: document.querySelector("#disableAllBtn"),
         clearBtn: document.querySelector("#clearBtn"),
+        analyticsTables: {
+          hr_bpm: document.querySelector("#analyticsTableHr"),
+          speed_kmh: document.querySelector("#analyticsTableSpeed"),
+          power_w: document.querySelector("#analyticsTablePower"),
+        },
+        analyticsStatus: document.querySelector("#analyticsStatus"),
+        trimToShortestInput: document.querySelector("#trimToShortestInput"),
+        chartTimeModeSelect: document.querySelector("#chartTimeModeSelect"),
+        metricTooltip: document.querySelector("#metricTooltip"),
       };
 
       const SUPPORTED_METRICS = ["hr_bpm", "speed_kmh", "power_w"];
+      const METRIC_LABELS = {
+        hr_bpm: "Heart rate",
+        speed_kmh: "Speed",
+        power_w: "Power"
+      };
+      const METRIC_UNITS = {
+        hr_bpm: "bpm",
+        speed_kmh: "km/h",
+        power_w: "W"
+      };
+      const ANALYTICS_COLUMN_HELP = {
+        "Compared file": "The enabled file being measured against the selected reference.",
+        Samples: "Number of matched timestamp points used in the calculation. Trim mode first cuts each metric to the common time window.",
+        Window: "Number of seconds included in the active analysis window for this metric and file pair. It shrinks when Analyze common period removes leading or trailing samples.",
+        Trimmed: "Seconds removed from the full pair window by Analyze common period. A non-zero value confirms the table is comparing only the shared period.",
+        Overlap: "Share of all seconds in the active analysis window that exist in both files. In full mode, extra leading/trailing recording time lowers this value; Analyze common period removes those tails first.",
+        Similarity: "Composite score from curve shape, RMSE, bias, and overlap. Higher means the compared file behaves more like the reference across the active analysis window.",
+        Correlation: "Pearson correlation between matched values. Higher means both curves rise and fall together more consistently.",
+        MAE: "Mean absolute error: the average absolute difference from the reference in the metric's native unit. Lower is better.",
+        RMSE: "Root mean squared error: like MAE but penalizes large spikes more strongly. Lower is better.",
+        Bias: "Average signed difference: positive means the compared file is higher than reference, negative means lower.",
+        "Max diff": "Largest absolute difference observed between matched points. Lower means fewer extreme deviations."
+      };
 
-      // key -> { key, name, size, lastModified, enabled, parsedSeries: { hr_bpm, speed_kmh, power_w } }
+      // referenceKey stores an explicit comparison baseline so analytics do not depend on
+      // the visual sort order of uploaded files, which can change as files are added.
+      // trimToShortest limits charts and analytics to the shared time window so extra leading
+      // or trailing samples from one recorder do not dominate similarity metrics.
       const state = {
-        files: new Map()
+        files: new Map(),
+        referenceKey: null,
+        trimToShortest: false,
+        chartTimeMode: "absolute"
       };
 
       function formatBytes(bytes) {
@@ -160,14 +305,42 @@
         return div.innerHTML;
       }
 
+      // Attribute values need quote escaping too because file names can contain quotes;
+      // without this, a title/data attribute could be broken by a valid local filename.
+      function escapeAttribute(text) {
+        return escapeHtml(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
       function enabledFiles() {
         return Array.from(state.files.values()).filter(f => f.enabled);
+      }
+
+      function currentReferenceFile(requireEnabled = true) {
+        if (state.referenceKey) {
+          const selectedReference = state.files.get(state.referenceKey);
+          if (selectedReference && (!requireEnabled || selectedReference.enabled)) return selectedReference;
+        }
+
+        return enabledFiles()[0] || null;
+      }
+
+      // If the selected reference is removed or individually disabled, fall back to an enabled file;
+      // when everything is disabled, keep the chosen key so Enable all restores the user's baseline.
+      function ensureReferenceKey() {
+        const selectedReference = currentReferenceFile(false);
+        if (selectedReference && !selectedReference.enabled && !enabledFiles().length) {
+          state.referenceKey = selectedReference.key;
+          return;
+        }
+
+        const currentReference = currentReferenceFile();
+        state.referenceKey = currentReference ? currentReference.key : null;
       }
 
       function updateFilesHeader() {
         const total = state.files.size;
         const enabled = enabledFiles().length;
-        ui.filesCount.textContent = total ? `(${enabled}/${total} enabled)` : "(0)";
+        ui.filesCount.textContent = total ? `(${enabled}/${total} visible)` : "(0)";
         ui.addFilesBtn.textContent = total ? "Add more files" : "Add files";
       }
 
@@ -180,18 +353,27 @@
         }
 
         const items = Array.from(state.files.values()).sort((a, b) => a.name.localeCompare(b.name));
+        ensureReferenceKey();
 
         ui.filesList.innerHTML = items.map(item => {
           const ext = item.name.toLowerCase().endsWith(".fit") ? "FIT" : (item.name.toLowerCase().endsWith(".tcx") ? "TCX" : "FILE");
+          const isReference = item.key === state.referenceKey;
+          const visibilityButtonText = item.enabled ? "Hide" : "Show";
+          // The active reference button explains why it is disabled, so users can distinguish
+          // the chosen baseline from a temporarily unavailable action.
+          const referenceButtonText = isReference ? "Used as reference" : "Set reference";
           return `
-            <div class="fileRow" data-key="${escapeHtml(item.key)}">
+            <div class="fileRow" data-key="${escapeAttribute(item.key)}">
               <div class="fileLeft">
-                <input type="checkbox" data-action="toggle" ${item.enabled ? "checked" : ""} />
-                <span class="fileName" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</span>
+                <span class="fileName" title="${escapeAttribute(item.name)}">${escapeHtml(item.name)}</span>
                 <span class="badge">${ext}</span>
+                ${isReference ? `<span class="badge">Reference</span>` : ""}
+                ${item.enabled ? "" : `<span class="badge">Hidden</span>`}
                 <span class="muted">${formatBytes(item.size)}</span>
               </div>
               <div class="actions">
+                <button class="btnSmall" data-action="set-reference" ${isReference ? "disabled" : ""}>${referenceButtonText}</button>
+                <button class="btnSmall" data-action="toggle-visibility">${visibilityButtonText}</button>
                 <button class="btnSmall" data-action="remove">Remove</button>
               </div>
             </div>
@@ -209,12 +391,29 @@
             const action = target.getAttribute("data-action");
             if (!action) return;
 
-            if (action === "toggle") {
+            if (action === "toggle-visibility") {
               ev.stopPropagation();
               const fileItem = state.files.get(key);
               if (!fileItem) return;
-              fileItem.enabled = row.querySelector('input[type="checkbox"]').checked;
+              // Hide/show keeps uploaded data in memory while excluding hidden files from
+              // charts and analytics, which is faster than removing and re-uploading them.
+              fileItem.enabled = !fileItem.enabled;
+              ensureReferenceKey();
               updateFilesHeader();
+              renderFilesList();
+              await updateChartsFromState();
+              return;
+            }
+
+            if (action === "set-reference") {
+              ev.stopPropagation();
+              const fileItem = state.files.get(key);
+              if (!fileItem) return;
+              // Choosing a reference also enables that file because comparison metrics need
+              // a visible, parsed baseline that participates in the current analysis set.
+              fileItem.enabled = true;
+              state.referenceKey = key;
+              renderFilesList();
               await updateChartsFromState();
               return;
             }
@@ -222,6 +421,7 @@
             if (action === "remove") {
               ev.stopPropagation();
               state.files.delete(key);
+              ensureReferenceKey();
               renderFilesList();
               await updateChartsFromState();
               return;
@@ -295,6 +495,7 @@
                 power_w: lookup.power_w.get(file.name) || { name: file.name, data: [] },
               }
             });
+            if (!state.referenceKey) state.referenceKey = key;
           }
 
           renderFilesList();
@@ -320,10 +521,444 @@
         return result;
       }
 
+      function seriesTimeBounds(series) {
+        if (!series || !Array.isArray(series.data)) return null;
+        let minTimestampMs = Infinity;
+        let maxTimestampMs = -Infinity;
+        let validTimestamps = 0;
+
+        for (const point of series.data) {
+          const timestampMs = Array.isArray(point) ? Number(point[0]) : NaN;
+          if (!Number.isFinite(timestampMs)) continue;
+          minTimestampMs = Math.min(minTimestampMs, timestampMs);
+          maxTimestampMs = Math.max(maxTimestampMs, timestampMs);
+          validTimestamps += 1;
+        }
+
+        if (validTimestamps < 2) return null;
+        return { minTimestampMs, maxTimestampMs };
+      }
+
+      function commonMetricTimeBounds(files, metric) {
+        const boundsByFile = files
+          .map(file => seriesTimeBounds(file.parsedSeries[metric]))
+          .filter(bounds => bounds !== null);
+        if (!boundsByFile.length) return null;
+
+        const minTimestampMs = Math.max(...boundsByFile.map(bounds => bounds.minTimestampMs));
+        const maxTimestampMs = Math.min(...boundsByFile.map(bounds => bounds.maxTimestampMs));
+        if (maxTimestampMs < minTimestampMs) return null;
+        return { minTimestampMs, maxTimestampMs };
+      }
+
+      function fileTimeBounds(file) {
+        const metricBounds = SUPPORTED_METRICS
+          .map(metric => seriesTimeBounds(file.parsedSeries[metric]))
+          .filter(bounds => bounds !== null);
+        if (!metricBounds.length) return null;
+
+        return {
+          minTimestampMs: Math.min(...metricBounds.map(bounds => bounds.minTimestampMs)),
+          maxTimestampMs: Math.max(...metricBounds.map(bounds => bounds.maxTimestampMs))
+        };
+      }
+
+      function commonEnabledFilesTimeBounds() {
+        const boundsByFile = enabledFiles()
+          .map(file => fileTimeBounds(file))
+          .filter(bounds => bounds !== null);
+        if (boundsByFile.length < 2) return null;
+
+        const minTimestampMs = Math.max(...boundsByFile.map(bounds => bounds.minTimestampMs));
+        const maxTimestampMs = Math.min(...boundsByFile.map(bounds => bounds.maxTimestampMs));
+        if (maxTimestampMs < minTimestampMs) return null;
+        return { minTimestampMs, maxTimestampMs };
+      }
+
+      function formatDurationMilliseconds(durationMs) {
+        if (!Number.isFinite(durationMs) || durationMs < 0) return "-";
+        const totalSeconds = Math.floor(durationMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const paddedMinutes = String(minutes).padStart(2, "0");
+        const paddedSeconds = String(seconds).padStart(2, "0");
+        return hours > 0 ? `${hours}:${paddedMinutes}:${paddedSeconds}` : `${minutes}:${paddedSeconds}`;
+      }
+
+      function formatDurationSeconds(durationSeconds) {
+        if (!Number.isFinite(durationSeconds) || durationSeconds < 0) return "-";
+        return formatDurationMilliseconds(durationSeconds * 1000);
+      }
+
+      // The header shows the shared file-level period instead of repeating the selected reference,
+      // because reference is already visible in the file list and this duration explains trim impact.
+      function analyticsStatusText() {
+        const commonBounds = commonEnabledFilesTimeBounds();
+        if (!commonBounds) return "";
+        return `common period: ${formatDurationMilliseconds(commonBounds.maxTimestampMs - commonBounds.minTimestampMs)}`;
+      }
+
+      // This aligns series by whole seconds because device exports often differ by milliseconds;
+      // trim bounds remove extra leading or trailing samples before scores are calculated.
+      function pointsBySecond(series, options = {}) {
+        const result = new Map();
+        if (!series || !Array.isArray(series.data)) return result;
+
+        const trimBounds = options.trimBounds || null;
+
+        for (const point of series.data) {
+          if (!Array.isArray(point) || point.length < 2) continue;
+          const timestampMs = Number(point[0]);
+          const value = Number(point[1]);
+          if (!Number.isFinite(timestampMs) || !Number.isFinite(value)) continue;
+          if (trimBounds && (timestampMs < trimBounds.minTimestampMs || timestampMs > trimBounds.maxTimestampMs)) continue;
+          const second = Math.floor(timestampMs / 1000);
+          result.set(second, value);
+        }
+
+        return result;
+      }
+
+      // These metrics combine error, bias, overlap and shape agreement so the table can surface
+      // both "how close are values" and "do the curves behave similarly" in one place.
+      function compareSeries(referenceSeries, candidateSeries, options = {}) {
+        const pointOptions = { trimBounds: options.trimBounds };
+        const fullReferenceBySecond = pointsBySecond(referenceSeries);
+        const fullCandidateBySecond = pointsBySecond(candidateSeries);
+        const referenceBySecond = pointsBySecond(referenceSeries, pointOptions);
+        const candidateBySecond = pointsBySecond(candidateSeries, pointOptions);
+        const paired = [];
+
+        for (const [second, referenceValue] of referenceBySecond.entries()) {
+          if (!candidateBySecond.has(second)) continue;
+          paired.push([referenceValue, candidateBySecond.get(second)]);
+        }
+
+        if (!paired.length) return null;
+
+        let absErrorSum = 0;
+        let squaredErrorSum = 0;
+        let signedErrorSum = 0;
+        let maxAbsDiff = 0;
+        let referenceSum = 0;
+        let candidateSum = 0;
+        let referenceAbsSum = 0;
+
+        for (const [referenceValue, candidateValue] of paired) {
+          const diff = candidateValue - referenceValue;
+          const absDiff = Math.abs(diff);
+          absErrorSum += absDiff;
+          squaredErrorSum += diff * diff;
+          signedErrorSum += diff;
+          maxAbsDiff = Math.max(maxAbsDiff, absDiff);
+          referenceSum += referenceValue;
+          candidateSum += candidateValue;
+          referenceAbsSum += Math.abs(referenceValue);
+        }
+
+        const n = paired.length;
+        const referenceMean = referenceSum / n;
+        const candidateMean = candidateSum / n;
+        let covariance = 0;
+        let referenceVariance = 0;
+        let candidateVariance = 0;
+
+        for (const [referenceValue, candidateValue] of paired) {
+          const referenceCentered = referenceValue - referenceMean;
+          const candidateCentered = candidateValue - candidateMean;
+          covariance += referenceCentered * candidateCentered;
+          referenceVariance += referenceCentered * referenceCentered;
+          candidateVariance += candidateCentered * candidateCentered;
+        }
+
+        const mae = absErrorSum / n;
+        const rmse = Math.sqrt(squaredErrorSum / n);
+        const bias = signedErrorSum / n;
+        const referenceScale = Math.max(referenceAbsSum / n, 1);
+        const normalizedRmse = rmse / referenceScale;
+        // Use the union as the denominator so unmatched leading/trailing samples lower overlap
+        // in full mode; Analyze common period removes those samples before this calculation.
+        const unionSeconds = new Set([...referenceBySecond.keys(), ...candidateBySecond.keys()]);
+        const fullUnionSeconds = new Set([...fullReferenceBySecond.keys(), ...fullCandidateBySecond.keys()]);
+        const activeWindowSeconds = unionSeconds.size;
+        const trimmedSeconds = Math.max(0, fullUnionSeconds.size - activeWindowSeconds);
+        const overlapDenominator = Math.max(activeWindowSeconds, 1);
+        const overlapPct = (n / overlapDenominator) * 100;
+        const correlationDenominator = Math.sqrt(referenceVariance * candidateVariance);
+        const correlation = correlationDenominator > 0 ? covariance / correlationDenominator : null;
+        const shapeScore = correlation === null ? 0.5 : Math.max(0, Math.min(1, (correlation + 1) / 2));
+        const errorScore = 1 / (1 + normalizedRmse);
+        const biasScore = 1 / (1 + Math.abs(bias) / referenceScale);
+        const overlapScore = Math.max(0, Math.min(1, overlapPct / 100));
+        const similarityScore = (0.35 * shapeScore + 0.30 * errorScore + 0.15 * biasScore + 0.20 * overlapScore) * 100;
+
+        return {
+          pairedSamples: n,
+          activeWindowSeconds,
+          trimmedSeconds,
+          overlapPct,
+          similarityScore,
+          correlation,
+          mae,
+          rmse,
+          bias,
+          maxAbsDiff
+        };
+      }
+
+      function formatNumber(value, digits = 1) {
+        if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+        return value.toFixed(digits);
+      }
+
+      function formatMetricValue(value, unit, digits = 1) {
+        const formatted = formatNumber(value, digits);
+        return formatted === "-" ? "-" : `${formatted} ${unit}`;
+      }
+
+      function normalizeSeriesForChart(series, trimBounds) {
+        if (!series || !Array.isArray(series.data)) return { name: series ? series.name : "", data: [] };
+        const seriesBounds = seriesTimeBounds(series);
+        const elapsedStartTimestampMs = trimBounds ? trimBounds.minTimestampMs : (seriesBounds ? seriesBounds.minTimestampMs : null);
+
+        const data = [];
+        for (const point of series.data) {
+          if (!Array.isArray(point) || point.length < 2) continue;
+          const timestampMs = Number(point[0]);
+          const value = Number(point[1]);
+          if (!Number.isFinite(timestampMs) || !Number.isFinite(value)) continue;
+          if (trimBounds && (timestampMs < trimBounds.minTimestampMs || timestampMs > trimBounds.maxTimestampMs)) continue;
+
+          // Elapsed mode intentionally changes chart X from wall-clock timestamp to duration
+          // so files can be visually compared from their activity/common-period start.
+          const xValue = state.chartTimeMode === "elapsed" && elapsedStartTimestampMs !== null
+            ? timestampMs - elapsedStartTimestampMs
+            : timestampMs;
+          data.push([xValue, value]);
+        }
+
+        return { name: series.name, data };
+      }
+
+      // Chart trimming mirrors the analytics mode so visual tails appear/disappear with the same
+      // option that changes the table math, keeping charts and scores grounded in one window.
+      function chartSeriesForMetric(metric) {
+        const rawSeries = seriesForMetric(metric);
+        const filesWithMetric = enabledFiles().filter(file => {
+          const series = file.parsedSeries[metric];
+          return series && Array.isArray(series.data) && series.data.length;
+        });
+        const trimBounds = state.trimToShortest ? commonMetricTimeBounds(filesWithMetric, metric) : null;
+
+        return rawSeries
+          .map(series => normalizeSeriesForChart(series, trimBounds))
+          .filter(series => series.data.length);
+      }
+
+      function chartBoundsForSeries(seriesList) {
+        let minTimestampMs = Infinity;
+        let maxTimestampMs = -Infinity;
+
+        for (const series of seriesList) {
+          for (const point of series.data || []) {
+            const timestampMs = Array.isArray(point) ? Number(point[0]) : NaN;
+            if (!Number.isFinite(timestampMs)) continue;
+            minTimestampMs = Math.min(minTimestampMs, timestampMs);
+            maxTimestampMs = Math.max(maxTimestampMs, timestampMs);
+          }
+        }
+
+        if (!Number.isFinite(minTimestampMs) || !Number.isFinite(maxTimestampMs)) return {};
+        return { min: minTimestampMs, max: maxTimestampMs };
+      }
+
+      function chartXAxisOptionsForSeries(seriesList) {
+        const type = state.chartTimeMode === "elapsed" ? "numeric" : "datetime";
+        return {
+          ...chartXAxisBaseOptions(type),
+          ...chartBoundsForSeries(seriesList)
+        };
+      }
+
+      // Resetting axis bounds with the currently visible series prevents ApexCharts from keeping
+      // stale zoom/range state after Analyze common period hides or restores leading/trailing data.
+      async function updateChartSeries(chart, seriesList) {
+        await chart.updateOptions({ xaxis: chartXAxisOptionsForSeries(seriesList) }, false, false);
+        await chart.updateSeries(seriesList);
+      }
+
+      // Header tooltips keep analytical definitions close to the table so users can interpret
+      // dense comparison metrics without leaving the current review workflow.
+      function analyticsHeader(label) {
+        const tooltip = ANALYTICS_COLUMN_HELP[label] || "";
+        if (!tooltip) return escapeHtml(label);
+
+        return `
+          <span class="metricHeader">
+            <span>${escapeHtml(label)}</span>
+            <span class="metricHelp" tabindex="0" role="button" aria-label="${escapeAttribute(`${label}: ${tooltip}`)}" data-tooltip="${escapeAttribute(tooltip)}">?</span>
+          </span>
+        `;
+      }
+
+      function hideMetricTooltip() {
+        ui.metricTooltip.classList.remove("visible");
+        ui.metricTooltip.textContent = "";
+      }
+
+      // The tooltip is rendered outside the scrollable table because table overflow clips
+      // header pseudo-elements; fixed positioning keeps descriptions visible at table edges.
+      function showMetricTooltip(helpElement) {
+        const tooltipText = helpElement.getAttribute("data-tooltip") || "";
+        if (!tooltipText) return;
+
+        ui.metricTooltip.textContent = tooltipText;
+        ui.metricTooltip.classList.add("visible");
+
+        const helpRect = helpElement.getBoundingClientRect();
+        const tooltipRect = ui.metricTooltip.getBoundingClientRect();
+        const viewportPadding = 12;
+        const preferredLeft = helpRect.left + helpRect.width / 2 - tooltipRect.width / 2;
+        const left = Math.min(
+          Math.max(preferredLeft, viewportPadding),
+          window.innerWidth - tooltipRect.width - viewportPadding
+        );
+        const preferredTop = helpRect.top - tooltipRect.height - 8;
+        const top = preferredTop >= viewportPadding ? preferredTop : helpRect.bottom + 8;
+
+        ui.metricTooltip.style.left = `${left}px`;
+        ui.metricTooltip.style.top = `${top}px`;
+      }
+
+      function bindMetricTooltips(container) {
+        container.querySelectorAll(".metricHelp").forEach(helpElement => {
+          helpElement.addEventListener("mouseenter", () => showMetricTooltip(helpElement));
+          helpElement.addEventListener("focus", () => showMetricTooltip(helpElement));
+          helpElement.addEventListener("mouseleave", hideMetricTooltip);
+          helpElement.addEventListener("blur", hideMetricTooltip);
+        });
+      }
+
+      function isBestAnalyticsCell(rows, row, key, higherIsBetter) {
+        const comparableRows = rows.filter(candidate => candidate.metric === row.metric && candidate[key] !== null && candidate[key] !== undefined && Number.isFinite(candidate[key]));
+        if (!comparableRows.length || row[key] === null || row[key] === undefined || !Number.isFinite(row[key])) return false;
+        const bestValue = comparableRows.reduce((best, candidate) => {
+          return higherIsBetter ? Math.max(best, candidate[key]) : Math.min(best, candidate[key]);
+        }, comparableRows[0][key]);
+        return Math.abs(row[key] - bestValue) < 0.000001;
+      }
+
+      // Analytics are derived from enabled files only, so removing or disabling a file immediately
+      // changes the evidence used by the comparison table and keeps it consistent with the charts.
+      function buildAnalyticsRows(metric) {
+        const files = enabledFiles();
+        if (files.length < 2) return [];
+
+        const rows = [];
+        ensureReferenceKey();
+        const referenceFile = currentReferenceFile();
+        if (!referenceFile) return rows;
+        const candidateFiles = files.filter(file => file.key !== referenceFile.key);
+
+        const referenceSeries = referenceFile.parsedSeries[metric];
+        if (!referenceSeries || !Array.isArray(referenceSeries.data) || !referenceSeries.data.length) return rows;
+        const metricFiles = [referenceFile, ...candidateFiles].filter(file => {
+          const series = file.parsedSeries[metric];
+          return series && Array.isArray(series.data) && series.data.length;
+        });
+        const trimBounds = state.trimToShortest ? commonMetricTimeBounds(metricFiles, metric) : null;
+
+        for (const candidateFile of candidateFiles) {
+          const candidateSeries = candidateFile.parsedSeries[metric];
+          if (!candidateSeries || !Array.isArray(candidateSeries.data) || !candidateSeries.data.length) continue;
+          const metrics = compareSeries(referenceSeries, candidateSeries, { trimBounds });
+          if (!metrics) continue;
+          rows.push({
+            metric,
+            candidateName: candidateFile.name,
+            ...metrics
+          });
+        }
+
+        return rows;
+      }
+
+      function renderMetricAnalyticsTable(metric, rows) {
+        const container = ui.analyticsTables[metric];
+        if (!container) return;
+
+        if (!rows.length) {
+          container.innerHTML = `<div class="muted analyticsEmpty">Enable at least two files with overlapping ${escapeHtml(METRIC_LABELS[metric] || metric)} data to see comparison analytics.</div>`;
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="analyticsTableWrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>${analyticsHeader("Compared file")}</th>
+                  <th>${analyticsHeader("Samples")}</th>
+                  <th>${analyticsHeader("Window")}</th>
+                  <th>${analyticsHeader("Trimmed")}</th>
+                  <th>${analyticsHeader("Overlap")}</th>
+                  <th>${analyticsHeader("Similarity")}</th>
+                  <th>${analyticsHeader("Correlation")}</th>
+                  <th>${analyticsHeader("MAE")}</th>
+                  <th>${analyticsHeader("RMSE")}</th>
+                  <th>${analyticsHeader("Bias")}</th>
+                  <th>${analyticsHeader("Max diff")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(row => {
+                  const unit = METRIC_UNITS[row.metric];
+                  const similarityClass = isBestAnalyticsCell(rows, row, "similarityScore", true) ? "bestCell" : "";
+                  const correlationClass = isBestAnalyticsCell(rows, row, "correlation", true) ? "bestCell" : "";
+                  const maeClass = isBestAnalyticsCell(rows, row, "mae", false) ? "bestCell" : "";
+                  const rmseClass = isBestAnalyticsCell(rows, row, "rmse", false) ? "bestCell" : "";
+                  const maxDiffClass = isBestAnalyticsCell(rows, row, "maxAbsDiff", false) ? "bestCell" : "";
+                  return `
+                    <tr>
+                      <td title="${escapeAttribute(row.candidateName)}">${escapeHtml(row.candidateName)}</td>
+                      <td>${row.pairedSamples}</td>
+                      <td>${formatDurationSeconds(row.activeWindowSeconds)}</td>
+                      <td>${formatDurationSeconds(row.trimmedSeconds)}</td>
+                      <td>${formatNumber(row.overlapPct, 1)}%</td>
+                      <td class="${similarityClass}">${formatNumber(row.similarityScore, 1)}%</td>
+                      <td class="${correlationClass}">${formatNumber(row.correlation, 3)}</td>
+                      <td class="${maeClass}">${formatMetricValue(row.mae, unit)}</td>
+                      <td class="${rmseClass}">${formatMetricValue(row.rmse, unit)}</td>
+                      <td>${formatMetricValue(row.bias, unit)}</td>
+                      <td class="${maxDiffClass}">${formatMetricValue(row.maxAbsDiff, unit)}</td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        `;
+        bindMetricTooltips(container);
+      }
+
+      function renderAnalyticsTables() {
+        hideMetricTooltip();
+        ui.analyticsStatus.textContent = analyticsStatusText();
+        for (const metric of SUPPORTED_METRICS) {
+          const rows = buildAnalyticsRows(metric);
+          renderMetricAnalyticsTable(metric, rows);
+        }
+      }
+
       async function updateChartsFromState() {
-        await chartHr.updateSeries(seriesForMetric("hr_bpm"));
-        await chartSpeed.updateSeries(seriesForMetric("speed_kmh"));
-        await chartPower.updateSeries(seriesForMetric("power_w"));
+        const hrSeries = chartSeriesForMetric("hr_bpm");
+        const speedSeries = chartSeriesForMetric("speed_kmh");
+        const powerSeries = chartSeriesForMetric("power_w");
+        await updateChartSeries(chartHr, hrSeries);
+        await updateChartSeries(chartSpeed, speedSeries);
+        await updateChartSeries(chartPower, powerSeries);
+        renderAnalyticsTables();
       }
 
       ui.addFilesBtn.addEventListener("click", () => {
@@ -338,25 +973,49 @@
         ui.fileInput.value = "";
       });
 
+      ui.trimToShortestInput.addEventListener("change", async () => {
+        // Trim mode changes both the score window and the chart window, so users can visually
+        // confirm which leading/trailing samples are included in the comparison.
+        state.trimToShortest = ui.trimToShortestInput.checked;
+        await updateChartsFromState();
+      });
+
+      ui.chartTimeModeSelect.addEventListener("change", async () => {
+        // Changing the chart time mode only remaps X values, leaving parsed activity samples and
+        // analytics scores intact while giving users either wall-clock or elapsed-time inspection.
+        currentChartTimeMode = ui.chartTimeModeSelect.value;
+        state.chartTimeMode = ui.chartTimeModeSelect.value;
+        await updateChartsFromState();
+      });
+
       ui.enableAllBtn.addEventListener("click", async () => {
         for (const item of state.files.values()) item.enabled = true;
+        ensureReferenceKey();
         renderFilesList();
         await updateChartsFromState();
       });
 
       ui.disableAllBtn.addEventListener("click", async () => {
         for (const item of state.files.values()) item.enabled = false;
+        ensureReferenceKey();
         renderFilesList();
         await updateChartsFromState();
       });
 
       ui.clearBtn.addEventListener("click", async () => {
         state.files.clear();
+        state.referenceKey = null;
         renderFilesList();
         await updateChartsFromState();
       });
 
+      // Hide floating tooltips during viewport changes because their fixed position is calculated
+      // from the old header coordinates and would otherwise point to the wrong column.
+      window.addEventListener("scroll", hideMetricTooltip, true);
+      window.addEventListener("resize", hideMetricTooltip);
+
       renderFilesList();
+      renderAnalyticsTables();
     </script>
   </body>
 </html>
