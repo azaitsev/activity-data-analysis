@@ -37,6 +37,12 @@
       .metricHelp:focus { outline: 2px solid #8ab4f8; outline-offset: 2px; }
       #metricTooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 8px; background: #222; color: #fff; font-size: 12px; font-weight: 400; line-height: 1.35; text-align: left; white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.18); opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity 120ms ease, transform 120ms ease; }
       #metricTooltip.visible { opacity: 1; transform: translateY(0); }
+      /* The processing overlay covers the slow parse/render gap so users get immediate feedback after choosing files. */
+      #processingOverlay { position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(255,255,255,0.74); backdrop-filter: blur(2px); }
+      #processingOverlay.visible { display: flex; }
+      .processingBox { display: inline-flex; align-items: center; gap: 12px; min-width: 240px; max-width: min(360px, 100%); padding: 14px 16px; border: 1px solid #dddddd; border-radius: 8px; background: #ffffff; box-shadow: 0 12px 30px rgba(0,0,0,0.14); color: #222; font-size: 14px; }
+      .processingSpinner { width: 22px; height: 22px; flex: 0 0 auto; border: 3px solid #e4e4e4; border-top-color: #1f6feb; border-radius: 50%; animation: processingSpin 800ms linear infinite; }
+      @keyframes processingSpin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -98,6 +104,13 @@
       </div>
     </div>
     <div id="metricTooltip" role="tooltip"></div>
+    <!-- This status layer makes long file parsing visible instead of leaving the page looking idle. -->
+    <div id="processingOverlay" role="status" aria-live="polite" aria-hidden="true">
+      <div class="processingBox">
+        <span class="processingSpinner" aria-hidden="true"></span>
+        <span id="processingMessage">Processing data...</span>
+      </div>
+    </div>
 
     <script>
       let currentChartTimeMode = "absolute";
@@ -241,6 +254,8 @@
         trimToShortestInput: document.querySelector("#trimToShortestInput"),
         chartTimeModeSelect: document.querySelector("#chartTimeModeSelect"),
         metricTooltip: document.querySelector("#metricTooltip"),
+        processingOverlay: document.querySelector("#processingOverlay"),
+        processingMessage: document.querySelector("#processingMessage"),
       };
 
       const SUPPORTED_METRICS = ["hr_bpm", "speed_kmh", "power_w"];
@@ -276,7 +291,8 @@
         files: new Map(),
         referenceKey: null,
         trimToShortest: false,
-        chartTimeMode: "absolute"
+        chartTimeMode: "absolute",
+        isProcessing: false
       };
 
       function formatBytes(bytes) {
@@ -297,6 +313,15 @@
 
       function setError(text) {
         ui.filesError.textContent = text || "";
+      }
+
+      function setProcessingState(isProcessing, message = "Processing data...") {
+        // The overlay is tied to the full parse-and-render cycle so users see that selected
+        // files are still being converted into chart series and comparison tables.
+        state.isProcessing = isProcessing;
+        ui.processingMessage.textContent = message;
+        ui.processingOverlay.classList.toggle("visible", isProcessing);
+        ui.processingOverlay.setAttribute("aria-hidden", isProcessing ? "false" : "true");
       }
 
       function escapeHtml(text) {
@@ -475,6 +500,7 @@
         ui.enableAllBtn.disabled = true;
         ui.disableAllBtn.disabled = true;
         ui.clearBtn.disabled = true;
+        setProcessingState(true, `Processing ${filesToParse.length} file(s)...`);
 
         try {
           setStatus(`Parsing ${filesToParse.length} file(s)`);
@@ -505,6 +531,7 @@
           setStatus("");
           setError(err instanceof Error ? err.message : "Parse error");
         } finally {
+          setProcessingState(false);
           ui.addFilesBtn.disabled = false;
           ui.enableAllBtn.disabled = false;
           ui.disableAllBtn.disabled = false;
