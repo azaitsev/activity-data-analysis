@@ -37,6 +37,37 @@
       .metricHelp:focus { outline: 2px solid #8ab4f8; outline-offset: 2px; }
       #metricTooltip { position: fixed; z-index: 1000; max-width: 280px; padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 8px; background: #222; color: #fff; font-size: 12px; font-weight: 400; line-height: 1.35; text-align: left; white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.18); opacity: 0; pointer-events: none; transform: translateY(4px); transition: opacity 120ms ease, transform 120ms ease; }
       #metricTooltip.visible { opacity: 1; transform: translateY(0); }
+      /* Annotation controls sit below comparison analytics so users can mark ranges without
+         displacing the existing chart/table workflow that the comparison review depends on. */
+      .annotationsPanel { display: grid; gap: 12px; }
+      .annotationsHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .annotationForm { display: grid; gap: 10px; padding: 12px; border: 1px solid #eeeeee; border-radius: 8px; background: #fbfbfb; }
+      .annotationForm[hidden] { display: none; }
+      .annotationFormTop { display: flex; align-items: end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+      .annotationField { display: grid; gap: 5px; font-size: 13px; color: #444; }
+      .annotationNameField { flex: 1 1 260px; max-width: 420px; }
+      .annotationField input[type="text"] { padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 6px; font: inherit; }
+      .rangeSliders { display: grid; gap: 8px; padding-top: 4px; }
+      .timelineRangeSlider { position: relative; height: 34px; touch-action: none; }
+      .timelineRangeTrack { position: absolute; left: var(--annotation-slider-left-pad, 8px); right: var(--annotation-slider-right-pad, 8px); top: 15px; height: 4px; border-radius: 999px; background: #e2e2e2; }
+      .timelineRangeFill { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: #9aa6b8; }
+      .timelineRangeHandle { position: absolute; top: 50%; width: 18px; height: 18px; padding: 0; border: 2px solid #69758a; border-radius: 50%; background: #ffffff; transform: translate(-50%, -50%); cursor: grab; z-index: 2; }
+      .timelineRangeHandle:active, .timelineRangeHandle.dragging { cursor: grabbing; }
+      .timelineRangeHandle:focus { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+      .rangeSliderLabels { display: flex; justify-content: space-between; gap: 12px; }
+      .annotationList { display: grid; gap: 8px; }
+      .annotationItem { display: grid; gap: 10px; padding: 8px; border: 1px solid #eeeeee; border-radius: 8px; }
+      .annotationItemSummary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .annotationItemSummary.hiddenWhileEditing { display: none; }
+      .annotationItemName { font-weight: 650; }
+      .annotationItemMeta { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .annotationForm .actions, .annotationItemSummary .actions { margin-left: auto; justify-content: flex-end; }
+      @media (max-width: 720px) {
+        .annotationFormTop { align-items: stretch; flex-direction: column; }
+        .annotationNameField { max-width: none; }
+        .annotationItemSummary { align-items: flex-start; flex-direction: column; }
+        .annotationForm .actions, .annotationItemSummary .actions { margin-left: 0; justify-content: flex-start; }
+      }
       /* The processing overlay covers the slow parse/render gap so users get immediate feedback after choosing files. */
       #processingOverlay { position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(255,255,255,0.74); backdrop-filter: blur(2px); }
       #processingOverlay.visible { display: flex; }
@@ -87,6 +118,49 @@
               </select>
             </label>
             <span id="analyticsStatus" class="muted"></span>
+          </div>
+        </div>
+      </div>
+      <!-- The annotation editor is explicit instead of prompt-based so saved x-axis ranges have
+           visible names, editable bounds, and live feedback before they affect the chart review. -->
+      <div class="card">
+        <div class="annotationsPanel">
+          <div class="annotationsHeader">
+            <div>
+              <strong>Annotations</strong>
+              <span id="annotationsStatus" class="muted"></span>
+            </div>
+            <button id="addAnnotationBtn" class="btnSmall">Add</button>
+          </div>
+          <div id="annotationsList" class="annotationList"></div>
+          <div id="annotationForm" class="annotationForm" hidden>
+            <div class="annotationFormTop">
+              <label class="annotationField annotationNameField">
+                <span>Name</span>
+                <input id="annotationNameInput" type="text" placeholder="Interval name" />
+              </label>
+              <div class="actions">
+                <button id="saveAnnotationBtn" class="btnSmall">Save</button>
+                <button id="cancelAnnotationBtn" class="btnSmall" type="button">Cancel</button>
+              </div>
+            </div>
+            <div class="annotationField">
+              <span>Range</span>
+              <div class="rangeSliders">
+                <div id="annotationRangeSlider" class="timelineRangeSlider" aria-label="Annotation range">
+                  <div class="timelineRangeTrack">
+                    <div id="annotationRangeFill" class="timelineRangeFill"></div>
+                  </div>
+                  <button id="annotationStartHandle" class="timelineRangeHandle" type="button" role="slider" aria-label="Start" aria-valuemin="0" aria-valuemax="1000" aria-valuenow="0"></button>
+                  <button id="annotationEndHandle" class="timelineRangeHandle" type="button" role="slider" aria-label="End" aria-valuemin="0" aria-valuemax="1000" aria-valuenow="1000"></button>
+                </div>
+                <div class="rangeSliderLabels">
+                  <span class="muted">Start: <span id="annotationStartLabel">-</span></span>
+                  <span class="muted">End: <span id="annotationEndLabel">-</span></span>
+                </div>
+              </div>
+            </div>
+            <div id="annotationFormError" class="error"></div>
           </div>
         </div>
       </div>
@@ -253,6 +327,21 @@
         analyticsStatus: document.querySelector("#analyticsStatus"),
         trimToShortestInput: document.querySelector("#trimToShortestInput"),
         chartTimeModeSelect: document.querySelector("#chartTimeModeSelect"),
+        annotationsStatus: document.querySelector("#annotationsStatus"),
+        annotationsPanel: document.querySelector(".annotationsPanel"),
+        addAnnotationBtn: document.querySelector("#addAnnotationBtn"),
+        annotationForm: document.querySelector("#annotationForm"),
+        annotationNameInput: document.querySelector("#annotationNameInput"),
+        annotationRangeSlider: document.querySelector("#annotationRangeSlider"),
+        annotationRangeFill: document.querySelector("#annotationRangeFill"),
+        annotationStartHandle: document.querySelector("#annotationStartHandle"),
+        annotationEndHandle: document.querySelector("#annotationEndHandle"),
+        annotationStartLabel: document.querySelector("#annotationStartLabel"),
+        annotationEndLabel: document.querySelector("#annotationEndLabel"),
+        saveAnnotationBtn: document.querySelector("#saveAnnotationBtn"),
+        cancelAnnotationBtn: document.querySelector("#cancelAnnotationBtn"),
+        annotationFormError: document.querySelector("#annotationFormError"),
+        annotationsList: document.querySelector("#annotationsList"),
         metricTooltip: document.querySelector("#metricTooltip"),
         processingOverlay: document.querySelector("#processingOverlay"),
         processingMessage: document.querySelector("#processingMessage"),
@@ -292,7 +381,27 @@
         referenceKey: null,
         trimToShortest: false,
         chartTimeMode: "absolute",
+        // Annotations are stored in source timestamps so saved ranges survive chart-time switches
+        // and can be redrawn correctly on every metric chart that currently has visible data.
+        annotations: [],
+        annotationDraft: null,
         isProcessing: false
+      };
+      // Drag state is kept outside app data because it only controls pointer interaction; this
+      // prevents temporary mouse/touch movement from becoming saved annotation state.
+      const annotationDragState = {
+        activeHandle: null,
+        capturedElement: null,
+        animationFrame: null,
+        previewInFlight: false,
+        previewPending: false
+      };
+      // The latest rendered series are cached so dragging an annotation can update only the
+      // ApexCharts overlay, avoiding expensive series/table rebuilds on every pointer move.
+      const renderedChartSeries = {
+        hr_bpm: [],
+        speed_kmh: [],
+        power_w: []
       };
 
       function formatBytes(bytes) {
@@ -602,6 +711,49 @@
         return { minTimestampMs, maxTimestampMs };
       }
 
+      function enabledFilesTimeBounds() {
+        const boundsByFile = enabledFiles()
+          .map(file => fileTimeBounds(file))
+          .filter(bounds => bounds !== null);
+        if (!boundsByFile.length) return null;
+
+        return {
+          minTimestampMs: Math.min(...boundsByFile.map(bounds => bounds.minTimestampMs)),
+          maxTimestampMs: Math.max(...boundsByFile.map(bounds => bounds.maxTimestampMs))
+        };
+      }
+
+      function annotationSelectionBounds() {
+        // The annotation editor follows the same visible-window idea as the analytics controls:
+        // common-period mode limits new ranges to the shared window, while full mode allows the
+        // complete enabled-file timeline so users can mark leading/trailing regions too.
+        return state.trimToShortest ? commonEnabledFilesTimeBounds() : enabledFilesTimeBounds();
+      }
+
+      function clampTimestampToBounds(timestampMs, bounds) {
+        if (!bounds || !Number.isFinite(timestampMs)) return timestampMs;
+        return Math.min(Math.max(timestampMs, bounds.minTimestampMs), bounds.maxTimestampMs);
+      }
+
+      function timestampFromSliderValue(sliderValue, bounds) {
+        if (!bounds) return null;
+        const ratio = Math.min(Math.max(Number(sliderValue) / 1000, 0), 1);
+        return bounds.minTimestampMs + (bounds.maxTimestampMs - bounds.minTimestampMs) * ratio;
+      }
+
+      function sliderValueFromTimestamp(timestampMs, bounds) {
+        if (!bounds || bounds.maxTimestampMs === bounds.minTimestampMs) return 0;
+        const clampedTimestampMs = clampTimestampToBounds(timestampMs, bounds);
+        return Math.round(((clampedTimestampMs - bounds.minTimestampMs) / (bounds.maxTimestampMs - bounds.minTimestampMs)) * 1000);
+      }
+
+      function formatAnnotationTimestamp(timestampMs) {
+        if (!Number.isFinite(timestampMs)) return "-";
+        return state.chartTimeMode === "elapsed"
+          ? formatDurationMilliseconds(timestampMs - (annotationSelectionBounds()?.minTimestampMs || timestampMs))
+          : formatChartTimestamp(timestampMs, timestampMs, true);
+      }
+
       function formatDurationMilliseconds(durationMs) {
         if (!Number.isFinite(durationMs) || durationMs < 0) return "-";
         const totalSeconds = Math.floor(durationMs / 1000);
@@ -808,11 +960,101 @@
         };
       }
 
+      function activeAnnotations() {
+        if (!state.annotationDraft) return state.annotations;
+        return [
+          ...state.annotations.filter(annotation => annotation.id !== state.annotationDraft.id),
+          state.annotationDraft
+        ];
+      }
+
+      function annotationChartRange(annotation, seriesList) {
+        const chartBounds = chartBoundsForSeries(seriesList);
+        if (!Number.isFinite(chartBounds.min) || !Number.isFinite(chartBounds.max)) return null;
+        const sourceBounds = annotationSelectionBounds();
+        const sourceStartMs = Math.min(annotation.startTimestampMs, annotation.endTimestampMs);
+        const sourceEndMs = Math.max(annotation.startTimestampMs, annotation.endTimestampMs);
+        const chartStart = state.chartTimeMode === "elapsed" && sourceBounds
+          ? sourceStartMs - sourceBounds.minTimestampMs
+          : sourceStartMs;
+        const chartEnd = state.chartTimeMode === "elapsed" && sourceBounds
+          ? sourceEndMs - sourceBounds.minTimestampMs
+          : sourceEndMs;
+        const visibleStart = Math.max(chartStart, chartBounds.min);
+        const visibleEnd = Math.min(chartEnd, chartBounds.max);
+        if (visibleEnd <= visibleStart) return null;
+        return { x: visibleStart, x2: visibleEnd };
+      }
+
+      function annotationOptionsForSeries(seriesList) {
+        const xaxis = activeAnnotations()
+          .map(annotation => {
+            const range = annotationChartRange(annotation, seriesList);
+            if (!range) return null;
+            return {
+              id: annotation.id,
+              x: range.x,
+              x2: range.x2,
+              fillColor: annotation.isDraft ? "#E8D8B8" : "#D8DEE8",
+              opacity: annotation.isDraft ? 0.35 : 0.28,
+              label: {
+                text: annotation.name || "Annotation",
+                style: {
+                  color: "#222",
+                  background: annotation.isDraft ? "#E8D8B8" : "#D8DEE8"
+                }
+              }
+            };
+          })
+          .filter(annotation => annotation !== null);
+
+        return { xaxis };
+      }
+
       // Resetting axis bounds with the currently visible series prevents ApexCharts from keeping
       // stale zoom/range state after Analyze common period hides or restores leading/trailing data.
       async function updateChartSeries(chart, seriesList) {
-        await chart.updateOptions({ xaxis: chartXAxisOptionsForSeries(seriesList) }, false, false);
+        // Annotations are updated together with xaxis bounds so ApexCharts redraws the saved
+        // x/x2 rectangles after series, trim mode, or chart-time coordinates change.
+        await chart.updateOptions({
+          xaxis: chartXAxisOptionsForSeries(seriesList),
+          annotations: annotationOptionsForSeries(seriesList)
+        }, false, false);
         await chart.updateSeries(seriesList);
+      }
+
+      async function updateChartAnnotations(chart, seriesList) {
+        await chart.updateOptions({ annotations: annotationOptionsForSeries(seriesList) }, false, false);
+      }
+
+      function scheduleAnnotationPreviewUpdate() {
+        if (annotationDragState.previewInFlight) {
+          annotationDragState.previewPending = true;
+          return;
+        }
+        if (annotationDragState.animationFrame !== null) {
+          annotationDragState.previewPending = true;
+          return;
+        }
+        // Dragging should repaint only the annotation layer once per animation frame; this keeps
+        // handles responsive instead of recomputing chart series and analytics for each pointermove.
+        // If ApexCharts is still applying the previous update, keep only the latest pending repaint
+        // so fast drags do not build an expensive queue of stale overlay positions.
+        annotationDragState.animationFrame = requestAnimationFrame(async () => {
+          annotationDragState.animationFrame = null;
+          annotationDragState.previewPending = false;
+          annotationDragState.previewInFlight = true;
+          try {
+            await Promise.all([
+              updateChartAnnotations(chartHr, renderedChartSeries.hr_bpm),
+              updateChartAnnotations(chartSpeed, renderedChartSeries.speed_kmh),
+              updateChartAnnotations(chartPower, renderedChartSeries.power_w)
+            ]);
+          } finally {
+            annotationDragState.previewInFlight = false;
+            if (annotationDragState.previewPending) scheduleAnnotationPreviewUpdate();
+          }
+        });
       }
 
       // Header tooltips keep analytical definitions close to the table so users can interpret
@@ -978,14 +1220,270 @@
         }
       }
 
+      function makeAnnotationId() {
+        return `annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+
+      function defaultAnnotationDraft(existingAnnotation = null) {
+        const bounds = annotationSelectionBounds();
+        if (!bounds) return null;
+        const startTimestampMs = existingAnnotation
+          ? clampTimestampToBounds(existingAnnotation.startTimestampMs, bounds)
+          : bounds.minTimestampMs;
+        const endTimestampMs = existingAnnotation
+          ? clampTimestampToBounds(existingAnnotation.endTimestampMs, bounds)
+          : bounds.minTimestampMs + (bounds.maxTimestampMs - bounds.minTimestampMs) * 0.25;
+
+        return {
+          id: existingAnnotation ? existingAnnotation.id : makeAnnotationId(),
+          name: existingAnnotation ? existingAnnotation.name : "",
+          startTimestampMs: Math.min(startTimestampMs, endTimestampMs),
+          endTimestampMs: Math.max(startTimestampMs, endTimestampMs),
+          isDraft: true
+        };
+      }
+
+      function syncAnnotationFormFromDraft() {
+        const bounds = annotationSelectionBounds();
+        const draft = state.annotationDraft;
+        if (!bounds || !draft) {
+          ui.annotationStartLabel.textContent = "-";
+          ui.annotationEndLabel.textContent = "-";
+          return;
+        }
+
+        ui.annotationNameInput.value = draft.name;
+        updateAnnotationSliderUi(
+          sliderValueFromTimestamp(draft.startTimestampMs, bounds),
+          sliderValueFromTimestamp(draft.endTimestampMs, bounds)
+        );
+        ui.annotationStartLabel.textContent = formatAnnotationTimestamp(draft.startTimestampMs);
+        ui.annotationEndLabel.textContent = formatAnnotationTimestamp(draft.endTimestampMs);
+      }
+
+      function updateAnnotationSliderUi(startSliderValue, endSliderValue) {
+        updateAnnotationSliderPlotPadding();
+        const startPercent = Math.min(Math.max(startSliderValue / 10, 0), 100);
+        const endPercent = Math.min(Math.max(endSliderValue / 10, 0), 100);
+        const startPosition = `calc(var(--annotation-slider-left-pad, 8px) + (100% - var(--annotation-slider-left-pad, 8px) - var(--annotation-slider-right-pad, 8px)) * ${startPercent / 100})`;
+        const endPosition = `calc(var(--annotation-slider-left-pad, 8px) + (100% - var(--annotation-slider-left-pad, 8px) - var(--annotation-slider-right-pad, 8px)) * ${endPercent / 100})`;
+        ui.annotationStartHandle.style.left = startPosition;
+        ui.annotationEndHandle.style.left = endPosition;
+        ui.annotationRangeFill.style.left = `${startPercent}%`;
+        ui.annotationRangeFill.style.width = `${Math.max(0, endPercent - startPercent)}%`;
+        ui.annotationStartHandle.setAttribute("aria-valuenow", String(Math.round(startSliderValue)));
+        ui.annotationEndHandle.setAttribute("aria-valuenow", String(Math.round(endSliderValue)));
+      }
+
+      function updateAnnotationSliderPlotPadding() {
+        const sliderRect = ui.annotationRangeSlider.getBoundingClientRect();
+        if (!sliderRect.width) return;
+
+        const chartRoot = ["#chartHr", "#chartSpeed", "#chartPower"]
+          .map(selector => document.querySelector(selector))
+          .find(chartElement => {
+            const gridElement = chartElement ? chartElement.querySelector(".apexcharts-grid") : null;
+            return gridElement && gridElement.getBoundingClientRect().width > 0;
+          });
+        const chartCanvas = chartRoot ? chartRoot.querySelector(".apexcharts-canvas") : null;
+        const chartGrid = chartRoot ? chartRoot.querySelector(".apexcharts-grid") : null;
+        if (!chartCanvas || !chartGrid) {
+          ui.annotationRangeSlider.style.setProperty("--annotation-slider-left-pad", "8px");
+          ui.annotationRangeSlider.style.setProperty("--annotation-slider-right-pad", "8px");
+          return;
+        }
+
+        const gridRect = chartGrid.getBoundingClientRect();
+        if (!gridRect.width) return;
+
+        // ApexCharts draws x-axis annotations inside the plot grid, not across the whole SVG.
+        // Use page-coordinate offsets instead of proportional scaling so the timeline starts and
+        // ends under the same visible columns as the chart plot area, avoiding a right-shifted track.
+        const rawLeftPad = gridRect.left - sliderRect.left;
+        const rawRightPad = sliderRect.right - gridRect.right;
+        let leftPad = Math.max(8, rawLeftPad);
+        let rightPad = Math.max(8, rawRightPad);
+        const minimumTrackWidth = 80;
+        if (leftPad + rightPad > sliderRect.width - minimumTrackWidth) {
+          leftPad = 8;
+          rightPad = 8;
+        }
+        ui.annotationRangeSlider.style.setProperty("--annotation-slider-left-pad", `${leftPad}px`);
+        ui.annotationRangeSlider.style.setProperty("--annotation-slider-right-pad", `${rightPad}px`);
+      }
+
+      function syncAnnotationDraftFromSlider(startSliderValue, endSliderValue) {
+        const bounds = annotationSelectionBounds();
+        if (!bounds || !state.annotationDraft) return false;
+        const startTimestampMs = timestampFromSliderValue(startSliderValue, bounds);
+        const endTimestampMs = timestampFromSliderValue(endSliderValue, bounds);
+        if (!Number.isFinite(startTimestampMs) || !Number.isFinite(endTimestampMs)) return false;
+
+        // Keeping start/end ordered avoids invalid x/x2 ranges while still letting users adjust
+        // both handles on one timeline-style control.
+        state.annotationDraft.name = ui.annotationNameInput.value.trim();
+        state.annotationDraft.startTimestampMs = Math.min(startTimestampMs, endTimestampMs);
+        state.annotationDraft.endTimestampMs = Math.max(startTimestampMs, endTimestampMs);
+        updateAnnotationSliderUi(
+          sliderValueFromTimestamp(state.annotationDraft.startTimestampMs, bounds),
+          sliderValueFromTimestamp(state.annotationDraft.endTimestampMs, bounds)
+        );
+        ui.annotationStartLabel.textContent = formatAnnotationTimestamp(state.annotationDraft.startTimestampMs);
+        ui.annotationEndLabel.textContent = formatAnnotationTimestamp(state.annotationDraft.endTimestampMs);
+        return true;
+      }
+
+      function currentAnnotationSliderValues() {
+        const bounds = annotationSelectionBounds();
+        if (!bounds || !state.annotationDraft) return null;
+        return {
+          start: sliderValueFromTimestamp(state.annotationDraft.startTimestampMs, bounds),
+          end: sliderValueFromTimestamp(state.annotationDraft.endTimestampMs, bounds)
+        };
+      }
+
+      function sliderValueFromPointerEvent(ev) {
+        const trackElement = ui.annotationRangeSlider.querySelector(".timelineRangeTrack");
+        const trackRect = trackElement ? trackElement.getBoundingClientRect() : ui.annotationRangeSlider.getBoundingClientRect();
+        if (!trackRect.width) return 0;
+        const rawRatio = (ev.clientX - trackRect.left) / trackRect.width;
+        return Math.round(Math.min(Math.max(rawRatio, 0), 1) * 1000);
+      }
+
+      function moveAnnotationHandle(handleName, sliderValue) {
+        const sliderValues = currentAnnotationSliderValues();
+        if (!sliderValues) return false;
+        const nextStartValue = handleName === "start"
+          ? Math.min(sliderValue, sliderValues.end)
+          : sliderValues.start;
+        const nextEndValue = handleName === "end"
+          ? Math.max(sliderValue, sliderValues.start)
+          : sliderValues.end;
+        return syncAnnotationDraftFromSlider(nextStartValue, nextEndValue);
+      }
+
+      function reconcileAnnotationDraftWithBounds() {
+        if (!state.annotationDraft) return;
+        const bounds = annotationSelectionBounds();
+        if (!bounds) {
+          // Without visible data there is no meaningful x-axis range to edit, so the transient
+          // preview is closed instead of keeping sliders pointed at stale uploaded-file bounds.
+          state.annotationDraft = null;
+          ui.annotationForm.hidden = true;
+          return;
+        }
+
+        state.annotationDraft.startTimestampMs = clampTimestampToBounds(state.annotationDraft.startTimestampMs, bounds);
+        state.annotationDraft.endTimestampMs = clampTimestampToBounds(state.annotationDraft.endTimestampMs, bounds);
+        if (state.annotationDraft.endTimestampMs < state.annotationDraft.startTimestampMs) {
+          const previousStart = state.annotationDraft.startTimestampMs;
+          state.annotationDraft.startTimestampMs = state.annotationDraft.endTimestampMs;
+          state.annotationDraft.endTimestampMs = previousStart;
+        }
+        syncAnnotationFormFromDraft();
+      }
+
+      function placeAnnotationForm() {
+        if (!state.annotationDraft) {
+          ui.annotationsPanel.appendChild(ui.annotationForm);
+          return;
+        }
+
+        const editingSavedAnnotation = state.annotations.some(annotation => annotation.id === state.annotationDraft.id);
+        if (!editingSavedAnnotation) {
+          // A new annotation should be edited after the saved list, while editing an existing one
+          // should keep the controls inside that annotation's own block for clearer context.
+          ui.annotationsPanel.appendChild(ui.annotationForm);
+          syncAnnotationFormFromDraft();
+          return;
+        }
+
+        const editedAnnotationRow = Array.from(ui.annotationsList.querySelectorAll(".annotationItem"))
+          .find(row => row.getAttribute("data-annotation-id") === state.annotationDraft.id);
+        if (editedAnnotationRow) editedAnnotationRow.appendChild(ui.annotationForm);
+        syncAnnotationFormFromDraft();
+      }
+
+      function renderAnnotationsList() {
+        const bounds = annotationSelectionBounds();
+        ui.annotationsStatus.textContent = bounds
+          ? ` · ${state.annotations.length} saved`
+          : " · add files to choose a range";
+        ui.addAnnotationBtn.disabled = !bounds;
+
+        if (!state.annotations.length) {
+          ui.annotationsList.innerHTML = `<div class="muted analyticsEmpty">No saved annotations</div>`;
+          placeAnnotationForm();
+          return;
+        }
+
+        ui.annotationsList.innerHTML = state.annotations.map(annotation => {
+          const isEditingAnnotation = state.annotationDraft && state.annotationDraft.id === annotation.id;
+          return `
+            <div class="annotationItem" data-annotation-id="${escapeAttribute(annotation.id)}">
+              <div class="annotationItemSummary ${isEditingAnnotation ? "hiddenWhileEditing" : ""}">
+                <div class="annotationItemMeta">
+                  <span class="annotationItemName">${escapeHtml(annotation.name || "Annotation")}</span>
+                  <span class="muted">${escapeHtml(formatAnnotationTimestamp(annotation.startTimestampMs))} - ${escapeHtml(formatAnnotationTimestamp(annotation.endTimestampMs))}</span>
+                </div>
+                <div class="actions">
+                  <button class="btnSmall" data-action="edit-annotation">Edit</button>
+                  <button class="btnSmall" data-action="delete-annotation">Delete</button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        ui.annotationsList.querySelectorAll(".annotationItem").forEach(row => {
+          row.addEventListener("click", async (ev) => {
+            const target = ev.target;
+            if (!(target instanceof HTMLElement)) return;
+            const action = target.getAttribute("data-action");
+            if (!action) return;
+            const annotationId = row.getAttribute("data-annotation-id");
+            if (!annotationId) return;
+
+            if (action === "edit-annotation") {
+              // Editing reuses the same explicit form as Add, avoiding transient prompt labels
+              // and making the live chart preview available for saved ranges too.
+              const annotation = state.annotations.find(item => item.id === annotationId);
+              if (!annotation) return;
+              state.annotationDraft = defaultAnnotationDraft(annotation);
+              ui.annotationForm.hidden = false;
+              ui.annotationFormError.textContent = "";
+              syncAnnotationFormFromDraft();
+              await updateChartsFromState();
+              return;
+            }
+
+            if (action === "delete-annotation") {
+              // Delete removes the saved range from every chart immediately so stale highlighted
+              // regions cannot be mistaken for current comparison evidence.
+              state.annotations = state.annotations.filter(annotation => annotation.id !== annotationId);
+              if (state.annotationDraft && state.annotationDraft.id === annotationId) state.annotationDraft = null;
+              ui.annotationForm.hidden = state.annotationDraft === null;
+              renderAnnotationsList();
+              await updateChartsFromState();
+            }
+          });
+        });
+        placeAnnotationForm();
+      }
+
       async function updateChartsFromState() {
+        reconcileAnnotationDraftWithBounds();
         const hrSeries = chartSeriesForMetric("hr_bpm");
         const speedSeries = chartSeriesForMetric("speed_kmh");
         const powerSeries = chartSeriesForMetric("power_w");
+        renderedChartSeries.hr_bpm = hrSeries;
+        renderedChartSeries.speed_kmh = speedSeries;
+        renderedChartSeries.power_w = powerSeries;
         await updateChartSeries(chartHr, hrSeries);
         await updateChartSeries(chartSpeed, speedSeries);
         await updateChartSeries(chartPower, powerSeries);
         renderAnalyticsTables();
+        renderAnnotationsList();
       }
 
       ui.addFilesBtn.addEventListener("click", () => {
@@ -1012,6 +1510,129 @@
         // analytics scores intact while giving users either wall-clock or elapsed-time inspection.
         currentChartTimeMode = ui.chartTimeModeSelect.value;
         state.chartTimeMode = ui.chartTimeModeSelect.value;
+        syncAnnotationFormFromDraft();
+        await updateChartsFromState();
+      });
+
+      ui.addAnnotationBtn.addEventListener("click", async () => {
+        const draft = defaultAnnotationDraft();
+        if (!draft) return;
+        // Add opens a persistent editor because named analysis intervals must be visible and
+        // adjustable before they become saved annotations on all metric charts.
+        state.annotationDraft = draft;
+        ui.annotationForm.hidden = false;
+        ui.annotationFormError.textContent = "";
+        syncAnnotationFormFromDraft();
+        ui.annotationNameInput.focus();
+        await updateChartsFromState();
+      });
+
+      ui.annotationNameInput.addEventListener("input", async () => {
+        if (!state.annotationDraft) return;
+        // Label edits only affect the annotation overlay text, so avoid rebuilding chart series
+        // and tables while the user types.
+        state.annotationDraft.name = ui.annotationNameInput.value.trim();
+        scheduleAnnotationPreviewUpdate();
+      });
+
+      function startAnnotationHandleDrag(handleName, ev, captureElement = null) {
+        if (!state.annotationDraft) return;
+        annotationDragState.activeHandle = handleName;
+        const handleElement = handleName === "start" ? ui.annotationStartHandle : ui.annotationEndHandle;
+        const dragCaptureElement = captureElement || handleElement;
+        handleElement.classList.add("dragging");
+        annotationDragState.capturedElement = dragCaptureElement;
+        dragCaptureElement.setPointerCapture(ev.pointerId);
+        moveAnnotationHandle(handleName, sliderValueFromPointerEvent(ev));
+        scheduleAnnotationPreviewUpdate();
+      }
+
+      ui.annotationStartHandle.addEventListener("pointerdown", (ev) => {
+        // Pointer dragging gives one shared timeline control with two handles, matching the range
+        // selection mental model while avoiding the slow double native-slider rerender path.
+        startAnnotationHandleDrag("start", ev);
+      });
+
+      ui.annotationEndHandle.addEventListener("pointerdown", (ev) => {
+        startAnnotationHandleDrag("end", ev);
+      });
+
+      ui.annotationRangeSlider.addEventListener("pointerdown", (ev) => {
+        if (!state.annotationDraft || ev.target === ui.annotationStartHandle || ev.target === ui.annotationEndHandle) return;
+        const sliderValues = currentAnnotationSliderValues();
+        if (!sliderValues) return;
+        const clickedValue = sliderValueFromPointerEvent(ev);
+        const nearestHandle = Math.abs(clickedValue - sliderValues.start) <= Math.abs(clickedValue - sliderValues.end) ? "start" : "end";
+        startAnnotationHandleDrag(nearestHandle, ev, ui.annotationRangeSlider);
+      });
+
+      ui.annotationRangeSlider.addEventListener("pointermove", (ev) => {
+        if (!annotationDragState.activeHandle) return;
+        if (!moveAnnotationHandle(annotationDragState.activeHandle, sliderValueFromPointerEvent(ev))) return;
+        scheduleAnnotationPreviewUpdate();
+      });
+
+      ui.annotationRangeSlider.addEventListener("pointerup", (ev) => {
+        if (!annotationDragState.activeHandle) return;
+        const handleElement = annotationDragState.activeHandle === "start" ? ui.annotationStartHandle : ui.annotationEndHandle;
+        handleElement.classList.remove("dragging");
+        if (annotationDragState.capturedElement && annotationDragState.capturedElement.hasPointerCapture(ev.pointerId)) {
+          annotationDragState.capturedElement.releasePointerCapture(ev.pointerId);
+        }
+        annotationDragState.activeHandle = null;
+        annotationDragState.capturedElement = null;
+      });
+
+      ["pointercancel", "lostpointercapture"].forEach(eventName => {
+        ui.annotationRangeSlider.addEventListener(eventName, () => {
+          ui.annotationStartHandle.classList.remove("dragging");
+          ui.annotationEndHandle.classList.remove("dragging");
+          annotationDragState.activeHandle = null;
+          annotationDragState.capturedElement = null;
+        });
+      });
+
+      ui.saveAnnotationBtn.addEventListener("click", async () => {
+        if (!state.annotationDraft) return;
+        state.annotationDraft.name = ui.annotationNameInput.value.trim();
+        const draft = state.annotationDraft;
+        if (!draft.name) {
+          ui.annotationFormError.textContent = "Enter annotation name";
+          return;
+        }
+        if (draft.endTimestampMs <= draft.startTimestampMs) {
+          ui.annotationFormError.textContent = "Choose a non-empty range";
+          return;
+        }
+
+        // Saving strips the draft marker so the preview color becomes the stable saved annotation
+        // color and the same object can be edited or deleted from the list later.
+        const savedAnnotation = {
+          id: draft.id,
+          name: draft.name,
+          startTimestampMs: draft.startTimestampMs,
+          endTimestampMs: draft.endTimestampMs
+        };
+        const existingIndex = state.annotations.findIndex(annotation => annotation.id === savedAnnotation.id);
+        if (existingIndex >= 0) {
+          state.annotations.splice(existingIndex, 1, savedAnnotation);
+        } else {
+          state.annotations.push(savedAnnotation);
+        }
+
+        state.annotationDraft = null;
+        ui.annotationForm.hidden = true;
+        ui.annotationFormError.textContent = "";
+        renderAnnotationsList();
+        await updateChartsFromState();
+      });
+
+      ui.cancelAnnotationBtn.addEventListener("click", async () => {
+        // Cancel removes only the transient preview, preserving already saved annotations and
+        // immediately clearing the draft rectangle from every chart.
+        state.annotationDraft = null;
+        ui.annotationForm.hidden = true;
+        ui.annotationFormError.textContent = "";
         await updateChartsFromState();
       });
 
@@ -1032,6 +1653,10 @@
       ui.clearBtn.addEventListener("click", async () => {
         state.files.clear();
         state.referenceKey = null;
+        state.annotationDraft = null;
+        // Clear resets analysis context entirely; keeping timestamp annotations after all source
+        // files are removed would make the next upload inherit unrelated highlighted intervals.
+        state.annotations = [];
         renderFilesList();
         await updateChartsFromState();
       });
@@ -1039,10 +1664,16 @@
       // Hide floating tooltips during viewport changes because their fixed position is calculated
       // from the old header coordinates and would otherwise point to the wrong column.
       window.addEventListener("scroll", hideMetricTooltip, true);
-      window.addEventListener("resize", hideMetricTooltip);
+      window.addEventListener("resize", () => {
+        hideMetricTooltip();
+        // Resizing changes both ApexCharts plot offsets and the editor width, so recompute the
+        // timeline padding to keep slider handles vertically aligned with chart annotations.
+        syncAnnotationFormFromDraft();
+      });
 
       renderFilesList();
       renderAnalyticsTables();
+      renderAnnotationsList();
     </script>
   </body>
 </html>
