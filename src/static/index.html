@@ -47,6 +47,8 @@
       .annotationField { display: grid; gap: 5px; font-size: 13px; color: #444; }
       .annotationNameField { flex: 1 1 260px; max-width: 420px; }
       .annotationField input[type="text"] { padding: 8px 10px; border: 1px solid #d8d8d8; border-radius: 6px; font: inherit; }
+      .annotationColorField { min-width: 92px; }
+      .annotationColorInput { width: 52px; height: 38px; padding: 3px; border: 1px solid #d8d8d8; border-radius: 6px; background: #fff; cursor: pointer; }
       .rangeSliders { display: grid; gap: 8px; padding-top: 4px; }
       .timelineRangeSlider { position: relative; height: 34px; touch-action: none; }
       .timelineRangeTrack { position: absolute; left: var(--annotation-slider-left-pad, 8px); right: var(--annotation-slider-right-pad, 8px); top: 15px; height: 4px; border-radius: 999px; background: #e2e2e2; }
@@ -61,6 +63,7 @@
       .annotationItemSummary.hiddenWhileEditing { display: none; }
       .annotationItemName { font-weight: 650; }
       .annotationItemMeta { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .annotationColorSwatch { width: 14px; height: 14px; flex: 0 0 auto; border: 1px solid rgba(0,0,0,0.18); border-radius: 50%; background: var(--annotation-color, #D8DEE8); }
       .annotationForm .actions, .annotationItemSummary .actions { margin-left: auto; justify-content: flex-end; }
       @media (max-width: 720px) {
         .annotationFormTop { align-items: stretch; flex-direction: column; }
@@ -138,6 +141,12 @@
               <label class="annotationField annotationNameField">
                 <span>Name</span>
                 <input id="annotationNameInput" type="text" placeholder="Interval name" />
+              </label>
+              <!-- The color picker makes annotation meaning editable per interval instead of
+                   forcing every saved chart range to share the same neutral overlay color. -->
+              <label class="annotationField annotationColorField">
+                <span>Color</span>
+                <input id="annotationColorInput" class="annotationColorInput" type="color" />
               </label>
               <div class="actions">
                 <button id="saveAnnotationBtn" class="btnSmall">Save</button>
@@ -332,6 +341,7 @@
         addAnnotationBtn: document.querySelector("#addAnnotationBtn"),
         annotationForm: document.querySelector("#annotationForm"),
         annotationNameInput: document.querySelector("#annotationNameInput"),
+        annotationColorInput: document.querySelector("#annotationColorInput"),
         annotationRangeSlider: document.querySelector("#annotationRangeSlider"),
         annotationRangeFill: document.querySelector("#annotationRangeFill"),
         annotationStartHandle: document.querySelector("#annotationStartHandle"),
@@ -358,6 +368,10 @@
         speed_kmh: "km/h",
         power_w: "W"
       };
+      // Default annotation colors keep new intervals visible on the chart before the user
+      // customizes them, and are reused as a safe fallback for older saved in-memory objects.
+      const DEFAULT_ANNOTATION_COLOR = "#d8dee8";
+      const DEFAULT_DRAFT_ANNOTATION_COLOR = "#e8d8b8";
       const ANALYTICS_COLUMN_HELP = {
         "Compared file": "The enabled file being measured against the selected reference.",
         Samples: "Number of matched timestamp points used in the calculation. Trim mode first cuts each metric to the common time window.",
@@ -735,6 +749,12 @@
         return Math.min(Math.max(timestampMs, bounds.minTimestampMs), bounds.maxTimestampMs);
       }
 
+      function normalizedAnnotationColor(color, fallbackColor = DEFAULT_ANNOTATION_COLOR) {
+        // Annotation color is user-editable and later injected into chart/DOM styles, so accept
+        // only hex colors from the picker and fall back safely for older annotations without color.
+        return /^#[0-9a-f]{6}$/i.test(String(color || "")) ? String(color).toLowerCase() : fallbackColor;
+      }
+
       function timestampFromSliderValue(sliderValue, bounds) {
         if (!bounds) return null;
         const ratio = Math.min(Math.max(Number(sliderValue) / 1000, 0), 1);
@@ -991,17 +1011,21 @@
           .map(annotation => {
             const range = annotationChartRange(annotation, seriesList);
             if (!range) return null;
+            const annotationColor = normalizedAnnotationColor(
+              annotation.color,
+              annotation.isDraft ? DEFAULT_DRAFT_ANNOTATION_COLOR : DEFAULT_ANNOTATION_COLOR
+            );
             return {
               id: annotation.id,
               x: range.x,
               x2: range.x2,
-              fillColor: annotation.isDraft ? "#E8D8B8" : "#D8DEE8",
+              fillColor: annotationColor,
               opacity: annotation.isDraft ? 0.35 : 0.28,
               label: {
                 text: annotation.name || "Annotation",
                 style: {
                   color: "#222",
-                  background: annotation.isDraft ? "#E8D8B8" : "#D8DEE8"
+                  background: annotationColor
                 }
               }
             };
@@ -1224,6 +1248,15 @@
         return `annotation-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       }
 
+      function nextAnnotationName() {
+        // New annotations get a ready-to-save label so users can quickly add several intervals
+        // while still avoiding duplicate default names after edits or deletes.
+        const usedNames = new Set(state.annotations.map(annotation => String(annotation.name || "").trim()));
+        let index = 1;
+        while (usedNames.has(`Annotation ${index}`)) index += 1;
+        return `Annotation ${index}`;
+      }
+
       function defaultAnnotationDraft(existingAnnotation = null) {
         const bounds = annotationSelectionBounds();
         if (!bounds) return null;
@@ -1233,12 +1266,16 @@
         const endTimestampMs = existingAnnotation
           ? clampTimestampToBounds(existingAnnotation.endTimestampMs, bounds)
           : bounds.minTimestampMs + (bounds.maxTimestampMs - bounds.minTimestampMs) * 0.25;
+        const color = existingAnnotation
+          ? normalizedAnnotationColor(existingAnnotation.color)
+          : DEFAULT_DRAFT_ANNOTATION_COLOR;
 
         return {
           id: existingAnnotation ? existingAnnotation.id : makeAnnotationId(),
-          name: existingAnnotation ? existingAnnotation.name : "",
+          name: existingAnnotation ? existingAnnotation.name : nextAnnotationName(),
           startTimestampMs: Math.min(startTimestampMs, endTimestampMs),
           endTimestampMs: Math.max(startTimestampMs, endTimestampMs),
+          color,
           isDraft: true
         };
       }
@@ -1253,6 +1290,7 @@
         }
 
         ui.annotationNameInput.value = draft.name;
+        ui.annotationColorInput.value = normalizedAnnotationColor(draft.color, DEFAULT_DRAFT_ANNOTATION_COLOR);
         updateAnnotationSliderUi(
           sliderValueFromTimestamp(draft.startTimestampMs, bounds),
           sliderValueFromTimestamp(draft.endTimestampMs, bounds)
@@ -1271,6 +1309,11 @@
         ui.annotationEndHandle.style.left = endPosition;
         ui.annotationRangeFill.style.left = `${startPercent}%`;
         ui.annotationRangeFill.style.width = `${Math.max(0, endPercent - startPercent)}%`;
+        // The slider fill mirrors the draft color so the form and chart preview communicate the
+        // same interval identity while the user edits the annotation.
+        ui.annotationRangeFill.style.background = state.annotationDraft
+          ? normalizedAnnotationColor(state.annotationDraft.color, DEFAULT_DRAFT_ANNOTATION_COLOR)
+          : DEFAULT_ANNOTATION_COLOR;
         ui.annotationStartHandle.setAttribute("aria-valuenow", String(Math.round(startSliderValue)));
         ui.annotationEndHandle.setAttribute("aria-valuenow", String(Math.round(endSliderValue)));
       }
@@ -1419,10 +1462,14 @@
 
         ui.annotationsList.innerHTML = state.annotations.map(annotation => {
           const isEditingAnnotation = state.annotationDraft && state.annotationDraft.id === annotation.id;
+          // The swatch connects saved rows with their chart rectangles so multiple annotations
+          // remain distinguishable even before the user opens one for editing.
+          const annotationColor = normalizedAnnotationColor(annotation.color);
           return `
             <div class="annotationItem" data-annotation-id="${escapeAttribute(annotation.id)}">
               <div class="annotationItemSummary ${isEditingAnnotation ? "hiddenWhileEditing" : ""}">
                 <div class="annotationItemMeta">
+                  <span class="annotationColorSwatch" style="--annotation-color: ${escapeAttribute(annotationColor)}" aria-hidden="true"></span>
                   <span class="annotationItemName">${escapeHtml(annotation.name || "Annotation")}</span>
                   <span class="muted">${escapeHtml(formatAnnotationTimestamp(annotation.startTimestampMs))} - ${escapeHtml(formatAnnotationTimestamp(annotation.endTimestampMs))}</span>
                 </div>
@@ -1535,6 +1582,16 @@
         scheduleAnnotationPreviewUpdate();
       });
 
+      ui.annotationColorInput.addEventListener("input", async () => {
+        if (!state.annotationDraft) return;
+        // Color edits should repaint the annotation overlay immediately so users can choose a
+        // distinguishable interval color without saving and reopening the annotation.
+        state.annotationDraft.color = normalizedAnnotationColor(ui.annotationColorInput.value, DEFAULT_DRAFT_ANNOTATION_COLOR);
+        const sliderValues = currentAnnotationSliderValues();
+        if (sliderValues) updateAnnotationSliderUi(sliderValues.start, sliderValues.end);
+        scheduleAnnotationPreviewUpdate();
+      });
+
       function startAnnotationHandleDrag(handleName, ev, captureElement = null) {
         if (!state.annotationDraft) return;
         annotationDragState.activeHandle = handleName;
@@ -1595,6 +1652,7 @@
       ui.saveAnnotationBtn.addEventListener("click", async () => {
         if (!state.annotationDraft) return;
         state.annotationDraft.name = ui.annotationNameInput.value.trim();
+        state.annotationDraft.color = normalizedAnnotationColor(ui.annotationColorInput.value, DEFAULT_DRAFT_ANNOTATION_COLOR);
         const draft = state.annotationDraft;
         if (!draft.name) {
           ui.annotationFormError.textContent = "Enter annotation name";
@@ -1611,7 +1669,8 @@
           id: draft.id,
           name: draft.name,
           startTimestampMs: draft.startTimestampMs,
-          endTimestampMs: draft.endTimestampMs
+          endTimestampMs: draft.endTimestampMs,
+          color: draft.color
         };
         const existingIndex = state.annotations.findIndex(annotation => annotation.id === savedAnnotation.id);
         if (existingIndex >= 0) {
