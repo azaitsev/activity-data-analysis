@@ -13,6 +13,9 @@
       .fileRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px; border: 1px solid #f0f0f0; border-radius: 8px; }
       .fileLeft { display: flex; align-items: center; gap: 10px; min-width: 0; }
       .fileName { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px; }
+      /* File colors are edited next to the filename because the color represents that file
+         everywhere, not one particular chart or metric. */
+      .fileColorInput { width: 34px; height: 30px; flex: 0 0 auto; padding: 2px; border: 1px solid #d8d8d8; border-radius: 6px; background: #fff; cursor: pointer; }
       .badge { font-size: 12px; padding: 2px 8px; border: 1px solid #e5e5e5; border-radius: 999px; color: #444; }
       .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       button { padding: 8px 12px; cursor: pointer; }
@@ -20,8 +23,11 @@
       .muted { color: #666; font-size: 13px; }
       .error { color: #b00020; font-size: 13px; }
       input[type="checkbox"] { transform: scale(1.1); }
-      .row { display: grid; grid-template-columns: 1fr; gap: 16px; }
-      .card { border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; }
+      /* Grid children otherwise keep the ApexCharts canvas intrinsic width, which prevents charts
+         from shrinking when the browser narrows even though they grow correctly with the window. */
+      .row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }
+      .card { min-width: 0; border: 1px solid #e5e5e5; border-radius: 10px; padding: 12px; }
+      #chartHr, #chartSpeed, #chartPower { width: 100%; min-width: 0; }
       .analyticsHeader { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
       .analyticsControls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
       .analyticsToggle { display: inline-flex; align-items: center; gap: 6px; color: #444; font-size: 13px; white-space: nowrap; }
@@ -372,13 +378,27 @@
       // customizes them, and are reused as a safe fallback for older saved in-memory objects.
       const DEFAULT_ANNOTATION_COLOR = "#d8dee8";
       const DEFAULT_DRAFT_ANNOTATION_COLOR = "#e8d8b8";
+      // New files get distinct defaults so chart lines are readable immediately, while the
+      // per-file picker still lets users override the color used across every metric chart.
+      const DEFAULT_FILE_COLORS = [
+        "#2563eb",
+        "#dc2626",
+        "#16a34a",
+        "#9333ea",
+        "#ea580c",
+        "#0891b2",
+        "#be123c",
+        "#4f46e5"
+      ];
       const ANALYTICS_COLUMN_HELP = {
         "Compared file": "The enabled file being measured against the selected reference.",
         Samples: "Number of matched timestamp points used in the calculation. Trim mode first cuts each metric to the common time window.",
         Window: "Number of seconds included in the active analysis window for this metric and file pair. It shrinks when Analyze common period removes leading or trailing samples.",
         Trimmed: "Seconds removed from the full pair window by Analyze common period. A non-zero value confirms the table is comparing only the shared period.",
-        Overlap: "Share of all seconds in the active analysis window that exist in both files. In full mode, extra leading/trailing recording time lowers this value; Analyze common period removes those tails first.",
-        Similarity: "Composite score from curve shape, RMSE, bias, and overlap. Higher means the compared file behaves more like the reference across the active analysis window.",
+        // "Shared coverage" describes the intersection-over-union timestamp calculation more
+        // precisely than "Overlap" while staying short enough for the dense analytics table.
+        "Shared coverage": "Shared timestamp coverage: share of all seconds in the active analysis window that exist in both files. In full mode, extra leading/trailing recording time lowers this value; Analyze common period removes those tails first.",
+        Similarity: "Composite score from curve shape, RMSE, bias, and shared timestamp coverage. Higher means the compared file behaves more like the reference across the active analysis window.",
         Correlation: "Pearson correlation between matched values. Higher means both curves rise and fall together more consistently.",
         MAE: "Mean absolute error: the average absolute difference from the reference in the metric's native unit. Lower is better.",
         RMSE: "Root mean squared error: like MAE but penalizes large spikes more strongly. Lower is better.",
@@ -463,6 +483,18 @@
         return Array.from(state.files.values()).filter(f => f.enabled);
       }
 
+      function normalizedFileColor(color, fallbackColor = DEFAULT_FILE_COLORS[0]) {
+        // File colors are injected into ApexCharts and inline input values, so keep only picker-
+        // compatible hex values and recover safely if older state objects have no color yet.
+        return /^#[0-9a-f]{6}$/i.test(String(color || "")) ? String(color).toLowerCase() : fallbackColor;
+      }
+
+      function defaultFileColor() {
+        // Cycling the palette gives each newly added file a deterministic visible line color
+        // before the user chooses a custom color beside the filename.
+        return DEFAULT_FILE_COLORS[state.files.size % DEFAULT_FILE_COLORS.length];
+      }
+
       function currentReferenceFile(requireEnabled = true) {
         if (state.referenceKey) {
           const selectedReference = state.files.get(state.referenceKey);
@@ -507,6 +539,7 @@
           const ext = item.name.toLowerCase().endsWith(".fit") ? "FIT" : (item.name.toLowerCase().endsWith(".tcx") ? "TCX" : "FILE");
           const isReference = item.key === state.referenceKey;
           const visibilityButtonText = item.enabled ? "Hide" : "Show";
+          const fileColor = normalizedFileColor(item.color);
           // The active reference button explains why it is disabled, so users can distinguish
           // the chosen baseline from a temporarily unavailable action.
           const referenceButtonText = isReference ? "Used as reference" : "Set reference";
@@ -514,6 +547,7 @@
             <div class="fileRow" data-key="${escapeAttribute(item.key)}">
               <div class="fileLeft">
                 <span class="fileName" title="${escapeAttribute(item.name)}">${escapeHtml(item.name)}</span>
+                <input class="fileColorInput" type="color" value="${escapeAttribute(fileColor)}" title="File color" aria-label="Color for ${escapeAttribute(item.name)}" data-action="change-color" />
                 <span class="badge">${ext}</span>
                 ${isReference ? `<span class="badge">Reference</span>` : ""}
                 ${item.enabled ? "" : `<span class="badge">Hidden</span>`}
@@ -574,6 +608,18 @@
               await updateChartsFromState();
               return;
             }
+          });
+
+          row.querySelectorAll(".fileColorInput").forEach(colorInput => {
+            colorInput.addEventListener("input", async (ev) => {
+              ev.stopPropagation();
+              const fileItem = state.files.get(row.getAttribute("data-key") || "");
+              if (!fileItem) return;
+              // Updating the file object is enough because every chart render derives its color
+              // array from enabled files in series order, keeping all metrics synchronized.
+              fileItem.color = normalizedFileColor(colorInput.value, fileItem.color);
+              await updateChartsFromState();
+            });
           });
         });
       }
@@ -638,6 +684,7 @@
               size: file.size,
               lastModified: file.lastModified,
               enabled: true,
+              color: defaultFileColor(),
               parsedSeries: {
                 hr_bpm: lookup.hr_bpm.get(file.name) || { name: file.name, data: [] },
                 speed_kmh: lookup.speed_kmh.get(file.name) || { name: file.name, data: [] },
@@ -937,22 +984,27 @@
           data.push([xValue, value]);
         }
 
-        return { name: series.name, data };
+        return { name: series.name, data, color: normalizedFileColor(series.color) };
       }
 
       // Chart trimming mirrors the analytics mode so visual tails appear/disappear with the same
       // option that changes the table math, keeping charts and scores grounded in one window.
       function chartSeriesForMetric(metric) {
-        const rawSeries = seriesForMetric(metric);
         const filesWithMetric = enabledFiles().filter(file => {
           const series = file.parsedSeries[metric];
           return series && Array.isArray(series.data) && series.data.length;
         });
         const trimBounds = state.trimToShortest ? commonMetricTimeBounds(filesWithMetric, metric) : null;
 
-        return rawSeries
-          .map(series => normalizeSeriesForChart(series, trimBounds))
+        return filesWithMetric
+          .map(file => normalizeSeriesForChart({ ...file.parsedSeries[metric], color: file.color }, trimBounds))
           .filter(series => series.data.length);
+      }
+
+      function chartColorsForSeries(seriesList) {
+        // ApexCharts colors are positional, so derive the array from the exact rendered series
+        // order rather than from the full file list where hidden or metric-less files may appear.
+        return seriesList.map(series => normalizedFileColor(series.color));
       }
 
       function chartBoundsForSeries(seriesList) {
@@ -1041,6 +1093,7 @@
         // Annotations are updated together with xaxis bounds so ApexCharts redraws the saved
         // x/x2 rectangles after series, trim mode, or chart-time coordinates change.
         await chart.updateOptions({
+          colors: chartColorsForSeries(seriesList),
           xaxis: chartXAxisOptionsForSeries(seriesList),
           annotations: annotationOptionsForSeries(seriesList)
         }, false, false);
@@ -1195,7 +1248,7 @@
                   <th>${analyticsHeader("Samples")}</th>
                   <th>${analyticsHeader("Window")}</th>
                   <th>${analyticsHeader("Trimmed")}</th>
-                  <th>${analyticsHeader("Overlap")}</th>
+                  <th>${analyticsHeader("Shared coverage")}</th>
                   <th>${analyticsHeader("Similarity")}</th>
                   <th>${analyticsHeader("Correlation")}</th>
                   <th>${analyticsHeader("MAE")}</th>
