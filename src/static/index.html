@@ -1092,8 +1092,12 @@
       async function updateChartSeries(chart, seriesList) {
         // Annotations are updated together with xaxis bounds so ApexCharts redraws the saved
         // x/x2 rectangles after series, trim mode, or chart-time coordinates change.
+        const seriesColors = chartColorsForSeries(seriesList);
         await chart.updateOptions({
-          colors: chartColorsForSeries(seriesList),
+          colors: seriesColors,
+          // ApexCharts refreshes line colors but can retain the old SVG legend-marker fill after
+          // updateOptions, so pass the same palette directly to the legend to keep both in sync.
+          legend: { markers: { fillColors: seriesColors } },
           xaxis: chartXAxisOptionsForSeries(seriesList),
           annotations: annotationOptionsForSeries(seriesList)
         }, false, false);
