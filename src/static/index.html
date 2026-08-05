@@ -115,9 +115,19 @@
             <span class="muted">choose the file used as the comparison baseline</span>
           </div>
           <div class="analyticsControls">
-            <label class="analyticsToggle" title="Show and compare only the common time window available in all enabled files.">
+            <label class="analyticsToggle" title="Apply the selected metric's shared time window to every chart and comparison table.">
               <input id="trimToShortestInput" type="checkbox" />
               <span>Analyze common period</span>
+            </label>
+            <!-- One selected metric must define the common window for every synchronized graph;
+                 otherwise HR, Speed, and Power calculate different X-axis ranges and drift apart. -->
+            <label class="analyticsToggle" title="Choose the metric whose shared time window is applied to every chart and comparison table.">
+              <span>Period metric</span>
+              <select id="trimMetricSelect" disabled>
+                <option value="hr_bpm">Heart rate</option>
+                <option value="speed_kmh">Speed</option>
+                <option value="power_w">Power</option>
+              </select>
             </label>
             <label class="analyticsToggle" title="Switch chart X-axis between wall-clock time and elapsed time from the activity/common-period start.">
               <span>Chart time</span>
@@ -262,9 +272,20 @@
         };
       }
 
-      function makeChartOptions(title) {
+      // A shared group lets ApexCharts mirror the hover crosshair across all metric charts, while
+      // unique IDs keep every chart independently addressable during its metric-specific updates.
+      function makeChartOptions(title, chartId, valueDigits = null) {
+        // Precision is applied only while rendering so analytics keep the original sample values;
+        // speed needs one stable decimal instead of exposing floating-point conversion artifacts.
+        const formatChartValue = value => Number.isInteger(valueDigits)
+          ? formatNumber(Number(value), valueDigits)
+          : value;
+        const yAxisLabels = { minWidth: 60 };
+        if (Number.isInteger(valueDigits)) yAxisLabels.formatter = formatChartValue;
         return {
           chart: {
+            id: chartId,
+            group: "activity-metrics",
             type: "line",
             height: 320,
             animations: { enabled: false },
@@ -274,6 +295,9 @@
           stroke: { width: 2 },
           title: { text: title },
           xaxis: chartXAxisBaseOptions("datetime"),
+          // Equal Y-axis label widths align the plot areas, so a synchronized vertical cursor
+          // represents the same horizontal position on Heart rate, Speed, and Power charts.
+          yaxis: { labels: yAxisLabels },
           series: [],
           tooltip: {
             shared: true,
@@ -298,7 +322,7 @@
                   const roundedSeriesPointTimeInMilliseconds = Math.floor(xValuesForCurrentSeries[currentSeriesDataPointIndex] / 1000) * 1000;
                   if (roundedSeriesPointTimeInMilliseconds === roundedHoveredTimeInMilliseconds) {
                     const valueAtMatchedTime = seriesValuesForCurrentSeries[currentSeriesDataPointIndex];
-                    seriesValueForTooltip = valueAtMatchedTime === undefined ? "-" : valueAtMatchedTime;
+                    seriesValueForTooltip = valueAtMatchedTime === undefined ? "-" : formatChartValue(valueAtMatchedTime);
                     break;
                   }
                 }
@@ -317,9 +341,9 @@
         };
       }
 
-      const chartHr = new ApexCharts(document.querySelector("#chartHr"), makeChartOptions("Heart rate (bpm)"));
-      const chartSpeed = new ApexCharts(document.querySelector("#chartSpeed"), makeChartOptions("Speed (km/h)"));
-      const chartPower = new ApexCharts(document.querySelector("#chartPower"), makeChartOptions("Power (W)"));
+      const chartHr = new ApexCharts(document.querySelector("#chartHr"), makeChartOptions("Heart rate (bpm)", "chart-heart-rate"));
+      const chartSpeed = new ApexCharts(document.querySelector("#chartSpeed"), makeChartOptions("Speed (km/h)", "chart-speed", 1));
+      const chartPower = new ApexCharts(document.querySelector("#chartPower"), makeChartOptions("Power (W)", "chart-power"));
       chartHr.render();
       chartSpeed.render();
       chartPower.render();
@@ -341,6 +365,7 @@
         },
         analyticsStatus: document.querySelector("#analyticsStatus"),
         trimToShortestInput: document.querySelector("#trimToShortestInput"),
+        trimMetricSelect: document.querySelector("#trimMetricSelect"),
         chartTimeModeSelect: document.querySelector("#chartTimeModeSelect"),
         annotationsStatus: document.querySelector("#annotationsStatus"),
         annotationsPanel: document.querySelector(".annotationsPanel"),
@@ -392,9 +417,11 @@
       ];
       const ANALYTICS_COLUMN_HELP = {
         "Compared file": "The enabled file being measured against the selected reference.",
-        Samples: "Number of matched timestamp points used in the calculation. Trim mode first cuts each metric to the common time window.",
-        Window: "Number of seconds included in the active analysis window for this metric and file pair. It shrinks when Analyze common period removes leading or trailing samples.",
-        Trimmed: "Seconds removed from the full pair window by Analyze common period. A non-zero value confirms the table is comparing only the shared period.",
+        // The selected period metric now supplies one shared window to every metric so analytics
+        // describe the same interval that the synchronized charts display.
+        Samples: "Number of matched timestamp points used in the calculation. Analyze common period first cuts every metric to the shared window of the selected period metric.",
+        Window: "Number of seconds included in the selected common-period window for this metric and file pair.",
+        Trimmed: "Seconds removed from the full pair window by the selected period metric. A non-zero value confirms the table uses the synchronized interval.",
         // "Shared coverage" describes the intersection-over-union timestamp calculation more
         // precisely than "Overlap" while staying short enough for the dense analytics table.
         "Shared coverage": "Shared timestamp coverage: share of all seconds in the active analysis window that exist in both files. In full mode, extra leading/trailing recording time lowers this value; Analyze common period removes those tails first.",
@@ -408,12 +435,13 @@
 
       // referenceKey stores an explicit comparison baseline so analytics do not depend on
       // the visual sort order of uploaded files, which can change as files are added.
-      // trimToShortest limits charts and analytics to the shared time window so extra leading
-      // or trailing samples from one recorder do not dominate similarity metrics.
+      // trimToShortest limits charts and analytics to one shared time window, while trimMetric
+      // identifies which sensor defines that window for every synchronized graph.
       const state = {
         files: new Map(),
         referenceKey: null,
         trimToShortest: false,
+        trimMetric: "hr_bpm",
         chartTimeMode: "absolute",
         // Annotations are stored in source timestamps so saved ranges survive chart-time switches
         // and can be redrawn correctly on every metric chart that currently has visible data.
@@ -740,12 +768,29 @@
         const boundsByFile = files
           .map(file => seriesTimeBounds(file.parsedSeries[metric]))
           .filter(bounds => bounds !== null);
-        if (!boundsByFile.length) return null;
+        // Two valid series are required to define an actual shared period; a single valid series
+        // must not masquerade as overlap when another selected file has insufficient samples.
+        if (boundsByFile.length < 2) return null;
 
         const minTimestampMs = Math.max(...boundsByFile.map(bounds => bounds.minTimestampMs));
         const maxTimestampMs = Math.min(...boundsByFile.map(bounds => bounds.maxTimestampMs));
         if (maxTimestampMs < minTimestampMs) return null;
         return { minTimestampMs, maxTimestampMs };
+      }
+
+      function selectedMetricCommonTimeBounds() {
+        const selectedMetric = SUPPORTED_METRICS.includes(state.trimMetric)
+          ? state.trimMetric
+          : SUPPORTED_METRICS[0];
+        const filesWithSelectedMetric = enabledFiles().filter(file => {
+          const series = file.parsedSeries[selectedMetric];
+          return series && Array.isArray(series.data) && series.data.length;
+        });
+
+        // A common period needs at least two recordings of the selected metric; returning null
+        // keeps the UI honest instead of silently falling back to unrelated full-range charts.
+        if (filesWithSelectedMetric.length < 2) return null;
+        return commonMetricTimeBounds(filesWithSelectedMetric, selectedMetric);
       }
 
       function fileTimeBounds(file) {
@@ -785,10 +830,9 @@
       }
 
       function annotationSelectionBounds() {
-        // The annotation editor follows the same visible-window idea as the analytics controls:
-        // common-period mode limits new ranges to the shared window, while full mode allows the
-        // complete enabled-file timeline so users can mark leading/trailing regions too.
-        return state.trimToShortest ? commonEnabledFilesTimeBounds() : enabledFilesTimeBounds();
+        // The annotation editor uses the selected metric's exact common window so its handles and
+        // overlays remain aligned with all synchronized charts in common-period mode.
+        return state.trimToShortest ? selectedMetricCommonTimeBounds() : enabledFilesTimeBounds();
       }
 
       function clampTimestampToBounds(timestampMs, bounds) {
@@ -840,6 +884,13 @@
       // The header shows the shared file-level period instead of repeating the selected reference,
       // because reference is already visible in the file list and this duration explains trim impact.
       function analyticsStatusText() {
+        if (state.trimToShortest) {
+          const selectedMetricLabel = METRIC_LABELS[state.trimMetric] || state.trimMetric;
+          const selectedBounds = selectedMetricCommonTimeBounds();
+          if (!selectedBounds) return `no common ${selectedMetricLabel.toLowerCase()} period`;
+          return `${selectedMetricLabel} common period: ${formatDurationMilliseconds(selectedBounds.maxTimestampMs - selectedBounds.minTimestampMs)}`;
+        }
+
         const commonBounds = commonEnabledFilesTimeBounds();
         if (!commonBounds) return "";
         return `common period: ${formatDurationMilliseconds(commonBounds.maxTimestampMs - commonBounds.minTimestampMs)}`;
@@ -987,14 +1038,15 @@
         return { name: series.name, data, color: normalizedFileColor(series.color) };
       }
 
-      // Chart trimming mirrors the analytics mode so visual tails appear/disappear with the same
-      // option that changes the table math, keeping charts and scores grounded in one window.
+      // Every metric is trimmed by the selected period metric so synchronized charts share one
+      // time interval instead of calculating incompatible HR, Speed, and Power ranges.
       function chartSeriesForMetric(metric) {
         const filesWithMetric = enabledFiles().filter(file => {
           const series = file.parsedSeries[metric];
           return series && Array.isArray(series.data) && series.data.length;
         });
-        const trimBounds = state.trimToShortest ? commonMetricTimeBounds(filesWithMetric, metric) : null;
+        const trimBounds = state.trimToShortest ? selectedMetricCommonTimeBounds() : null;
+        if (state.trimToShortest && !trimBounds) return [];
 
         return filesWithMetric
           .map(file => normalizeSeriesForChart({ ...file.parsedSeries[metric], color: file.color }, trimBounds))
@@ -1024,12 +1076,29 @@
         return { min: minTimestampMs, max: maxTimestampMs };
       }
 
-      function chartXAxisOptionsForSeries(seriesList) {
+      function chartXAxisOptionsForSeries(seriesList, sharedChartBounds = null) {
         const type = state.chartTimeMode === "elapsed" ? "numeric" : "datetime";
         return {
           ...chartXAxisBaseOptions(type),
-          ...chartBoundsForSeries(seriesList)
+          // Using the same explicit bounds on all grouped charts keeps synchronized hover and zoom
+          // mapped to one timestamp even when another metric has no samples near an interval edge.
+          ...(sharedChartBounds || chartBoundsForSeries(seriesList))
         };
+      }
+
+      function sharedChartBoundsForSeries(seriesLists) {
+        const selectedSourceBounds = state.trimToShortest ? selectedMetricCommonTimeBounds() : null;
+        if (selectedSourceBounds) {
+          // In common-period mode the selected source timestamps define the visible axis exactly;
+          // elapsed mode expresses that same interval as zero through its shared duration.
+          return state.chartTimeMode === "elapsed"
+            ? { min: 0, max: selectedSourceBounds.maxTimestampMs - selectedSourceBounds.minTimestampMs }
+            : { min: selectedSourceBounds.minTimestampMs, max: selectedSourceBounds.maxTimestampMs };
+        }
+
+        // Full mode still needs one combined chart-coordinate range so grouped crosshairs do not
+        // drift when one metric begins later or ends earlier than another.
+        return chartBoundsForSeries(seriesLists.flat());
       }
 
       function activeAnnotations() {
@@ -1040,8 +1109,8 @@
         ];
       }
 
-      function annotationChartRange(annotation, seriesList) {
-        const chartBounds = chartBoundsForSeries(seriesList);
+      function annotationChartRange(annotation, seriesList, sharedChartBounds = null) {
+        const chartBounds = sharedChartBounds || chartBoundsForSeries(seriesList);
         if (!Number.isFinite(chartBounds.min) || !Number.isFinite(chartBounds.max)) return null;
         const sourceBounds = annotationSelectionBounds();
         const sourceStartMs = Math.min(annotation.startTimestampMs, annotation.endTimestampMs);
@@ -1058,10 +1127,12 @@
         return { x: visibleStart, x2: visibleEnd };
       }
 
-      function annotationOptionsForSeries(seriesList) {
+      function annotationOptionsForSeries(seriesList, sharedChartBounds = null) {
         const xaxis = activeAnnotations()
           .map(annotation => {
-            const range = annotationChartRange(annotation, seriesList);
+            // Clip every overlay against the shared visible axis so saved ranges occupy the same
+            // horizontal interval on all synchronized metric charts.
+            const range = annotationChartRange(annotation, seriesList, sharedChartBounds);
             if (!range) return null;
             const annotationColor = normalizedAnnotationColor(
               annotation.color,
@@ -1089,23 +1160,27 @@
 
       // Resetting axis bounds with the currently visible series prevents ApexCharts from keeping
       // stale zoom/range state after Analyze common period hides or restores leading/trailing data.
-      async function updateChartSeries(chart, seriesList) {
+      async function updateChartSeries(chart, seriesList, sharedChartBounds) {
         // Annotations are updated together with xaxis bounds so ApexCharts redraws the saved
         // x/x2 rectangles after series, trim mode, or chart-time coordinates change.
         const seriesColors = chartColorsForSeries(seriesList);
+        // Keep colors, bounds, and clipped annotations local to this metric; the common chart
+        // group should synchronize pointer interaction without copying per-chart configuration.
         await chart.updateOptions({
           colors: seriesColors,
           // ApexCharts refreshes line colors but can retain the old SVG legend-marker fill after
           // updateOptions, so pass the same palette directly to the legend to keep both in sync.
           legend: { markers: { fillColors: seriesColors } },
-          xaxis: chartXAxisOptionsForSeries(seriesList),
-          annotations: annotationOptionsForSeries(seriesList)
-        }, false, false);
+          xaxis: chartXAxisOptionsForSeries(seriesList, sharedChartBounds),
+          annotations: annotationOptionsForSeries(seriesList, sharedChartBounds)
+        }, false, false, false);
         await chart.updateSeries(seriesList);
       }
 
-      async function updateChartAnnotations(chart, seriesList) {
-        await chart.updateOptions({ annotations: annotationOptionsForSeries(seriesList) }, false, false);
+      async function updateChartAnnotations(chart, seriesList, sharedChartBounds) {
+        // Each graph computes its own visible annotation range, so do not propagate one graph's
+        // clipped overlay to the other synchronized graphs during live annotation editing.
+        await chart.updateOptions({ annotations: annotationOptionsForSeries(seriesList, sharedChartBounds) }, false, false, false);
       }
 
       function scheduleAnnotationPreviewUpdate() {
@@ -1126,10 +1201,17 @@
           annotationDragState.previewPending = false;
           annotationDragState.previewInFlight = true;
           try {
+            // Live annotation updates reuse the shared X-axis bounds so dragging cannot make the
+            // same saved interval appear at different horizontal positions across metric charts.
+            const sharedChartBounds = sharedChartBoundsForSeries([
+              renderedChartSeries.hr_bpm,
+              renderedChartSeries.speed_kmh,
+              renderedChartSeries.power_w
+            ]);
             await Promise.all([
-              updateChartAnnotations(chartHr, renderedChartSeries.hr_bpm),
-              updateChartAnnotations(chartSpeed, renderedChartSeries.speed_kmh),
-              updateChartAnnotations(chartPower, renderedChartSeries.power_w)
+              updateChartAnnotations(chartHr, renderedChartSeries.hr_bpm, sharedChartBounds),
+              updateChartAnnotations(chartSpeed, renderedChartSeries.speed_kmh, sharedChartBounds),
+              updateChartAnnotations(chartPower, renderedChartSeries.power_w, sharedChartBounds)
             ]);
           } finally {
             annotationDragState.previewInFlight = false;
@@ -1213,11 +1295,10 @@
 
         const referenceSeries = referenceFile.parsedSeries[metric];
         if (!referenceSeries || !Array.isArray(referenceSeries.data) || !referenceSeries.data.length) return rows;
-        const metricFiles = [referenceFile, ...candidateFiles].filter(file => {
-          const series = file.parsedSeries[metric];
-          return series && Array.isArray(series.data) && series.data.length;
-        });
-        const trimBounds = state.trimToShortest ? commonMetricTimeBounds(metricFiles, metric) : null;
+        // Analytics use the same selected-metric window as every chart, preventing scores for HR,
+        // Speed, and Power from describing three different periods while the cursor is synchronized.
+        const trimBounds = state.trimToShortest ? selectedMetricCommonTimeBounds() : null;
+        if (state.trimToShortest && !trimBounds) return rows;
 
         for (const candidateFile of candidateFiles) {
           const candidateSeries = candidateFile.parsedSeries[metric];
@@ -1580,12 +1661,15 @@
         const hrSeries = chartSeriesForMetric("hr_bpm");
         const speedSeries = chartSeriesForMetric("speed_kmh");
         const powerSeries = chartSeriesForMetric("power_w");
+        // One axis range is calculated after all metric series are normalized, then supplied to
+        // every grouped chart so the selected common interval is visually identical everywhere.
+        const sharedChartBounds = sharedChartBoundsForSeries([hrSeries, speedSeries, powerSeries]);
         renderedChartSeries.hr_bpm = hrSeries;
         renderedChartSeries.speed_kmh = speedSeries;
         renderedChartSeries.power_w = powerSeries;
-        await updateChartSeries(chartHr, hrSeries);
-        await updateChartSeries(chartSpeed, speedSeries);
-        await updateChartSeries(chartPower, powerSeries);
+        await updateChartSeries(chartHr, hrSeries, sharedChartBounds);
+        await updateChartSeries(chartSpeed, speedSeries, sharedChartBounds);
+        await updateChartSeries(chartPower, powerSeries, sharedChartBounds);
         renderAnalyticsTables();
         renderAnnotationsList();
       }
@@ -1606,6 +1690,16 @@
         // Trim mode changes both the score window and the chart window, so users can visually
         // confirm which leading/trailing samples are included in the comparison.
         state.trimToShortest = ui.trimToShortestInput.checked;
+        // The selector is actionable only when its metric actually controls a common window,
+        // which avoids implying that it changes full-range charts while trim mode is disabled.
+        ui.trimMetricSelect.disabled = !state.trimToShortest;
+        await updateChartsFromState();
+      });
+
+      ui.trimMetricSelect.addEventListener("change", async () => {
+        // Recomputing all charts and tables applies the newly selected metric's shared timestamps
+        // as one synchronized interval without reparsing the uploaded activity files.
+        state.trimMetric = ui.trimMetricSelect.value;
         await updateChartsFromState();
       });
 

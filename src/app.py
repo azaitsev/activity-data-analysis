@@ -32,6 +32,7 @@ def parse_fit_bytes(file_bytes: bytes) -> pd.DataFrame:
     rows: List[dict] = []
 
     for record in fit_file.get_messages("record"):
+        speed_mps: Optional[float] = None
         row = {
             "timestamp": None,
             "hr_bpm": None,
@@ -46,9 +47,15 @@ def parse_fit_bytes(file_bytes: bytes) -> pd.DataFrame:
                 row["hr_bpm"] = field.value
             elif field.name == "power":
                 row["power_w"] = field.value
-            elif field.name == "speed":
-                if field.value is not None:
-                    row["speed_kmh"] = float(field.value) * 3.6
+            elif field.name == "speed" and field.value is not None and speed_mps is None:
+                speed_mps = float(field.value)
+            elif field.name == "enhanced_speed" and field.value is not None:
+                # Newer FIT devices may store the real speed only in enhanced_speed; preferring it
+                # keeps the speed chart populated and preserves the field's higher precision.
+                speed_mps = float(field.value)
+
+        if speed_mps is not None:
+            row["speed_kmh"] = speed_mps * 3.6
 
         if row["timestamp"] is not None:
             rows.append(row)
@@ -131,13 +138,21 @@ def parse_tcx_bytes(file_bytes: bytes) -> pd.DataFrame:
             continue
 
         hr_text = get_first_xpath_text(trackpoint, "./tcx:HeartRateBpm/tcx:Value", nsmap)
+        # Speed is not a core TCX Trackpoint field: Garmin writes it inside an ActivityExtension
+        # namespace whose prefix and version vary, so local-name keeps valid speed samples visible.
+        speed_text = get_first_xpath_text(
+            trackpoint,
+            "./tcx:Extensions//*[local-name()='Speed']",
+            nsmap,
+        )
+        speed_mps = safe_float(speed_text)
 
         rows.append(
             {
                 "timestamp": timestamp,
                 "hr_bpm": safe_int(hr_text),
                 "power_w": None,
-                "speed_kmh": None,
+                "speed_kmh": speed_mps * 3.6 if speed_mps is not None else None,
             }
         )
 
